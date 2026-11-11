@@ -11,8 +11,8 @@ import { Toaster } from 'sonner'
 import { Toaster as UIToaster } from '@/components/ui/toaster'
 
 export const metadata: Metadata = {
-  title: 'Voxinar | AI-powered webinars that talk back',
-  description: 'Automated AI webinar lead generation and live sales closing platform',
+  title: 'Real Estate Chat Widget',
+  description: 'Embeddable chat widget for real estate websites',
 }
 
 export default function RootLayout({
@@ -22,19 +22,9 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html
-        lang="en"
-        suppressHydrationWarning
-      >
-        <body
-          className="font-sans antialiased"
-          suppressHydrationWarning
-        >
-          <ThemeProvider
-            attribute="class"
-            defaultTheme="dark"
-            disableTransitionOnChange
-          >
+      <html lang="en" suppressHydrationWarning>
+        <body className="font-sans antialiased" suppressHydrationWarning>
+          <ThemeProvider attribute="class" defaultTheme="dark" disableTransitionOnChange>
             {children}
             <Toaster />
             <UIToaster />

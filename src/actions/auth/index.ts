@@ -2,8 +2,8 @@
 
 import { client } from '@/lib/prisma'
 import { currentUser } from '@clerk/nextjs/server'
-import { onGetAllAccountDomains } from '../settings'
 import { redirect } from 'next/navigation'
+import { onGetAllAccountDomains } from '../settings'
 
 export const onCompleteUserRegistration = async (
   fullname: string,
@@ -12,25 +12,11 @@ export const onCompleteUserRegistration = async (
 ) => {
   try {
     const registered = await client.user.create({
-      data: {
-        fullname,
-        clerkId,
-        type,
-        subscription: {
-          create: {},
-        },
-      },
-      select: {
-        fullname: true,
-        id: true,
-        type: true,
-      },
+      data: { fullname, clerkId, type },
+      select: { fullname: true, id: true, type: true },
     })
-
-    if (registered) {
-      return { status: 200, user: registered }
-    }
-  } catch (error) {
+    return { status: 200, user: registered }
+  } catch {
     return { status: 400 }
   }
 }
@@ -38,24 +24,15 @@ export const onCompleteUserRegistration = async (
 export const onLoginUser = async () => {
   const user = await currentUser()
   if (!user) redirect('/auth/sign-in')
-  else {
-    try {
-      const authenticated = await client.user.findUnique({
-        where: {
-          clerkId: user.id,
-        },
-        select: {
-          fullname: true,
-          id: true,
-          type: true,
-        },
-      })
-      if (authenticated) {
-        const domains = await onGetAllAccountDomains()
-        return { status: 200, user: authenticated, domain: domains?.domains }
-      }
-    } catch (error) {
-      return { status: 400 }
-    }
+  try {
+    const authenticated = await client.user.findUnique({
+      where: { clerkId: user.id },
+      select: { fullname: true, id: true, type: true },
+    })
+    if (!authenticated) return { status: 400 }
+    const domains = await onGetAllAccountDomains()
+    return { status: 200, user: authenticated, domain: domains?.domains ?? [] }
+  } catch {
+    return { status: 400 }
   }
 }

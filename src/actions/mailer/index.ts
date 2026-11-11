@@ -1,28 +1,38 @@
-'use server'
+﻿'use server'
+
 import nodemailer from 'nodemailer'
 
-export const onMailer = async (email: string) => {
+type MailInput = {
+  to: string | string[]
+  subject: string
+  text?: string
+  html?: string
+}
+
+export const sendMail = async ({ to, subject, text, html }: MailInput) => {
   const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: process.env.SMTP_SECURE !== 'false',
     auth: {
-      user: process.env.NODE_MAILER_EMAIL,
-      pass: process.env.NODE_MAILER_GMAIL_APP_PASSWORD,
+      user: process.env.SMTP_USER || process.env.NODE_MAILER_EMAIL,
+      pass: process.env.SMTP_PASS || process.env.NODE_MAILER_GMAIL_APP_PASSWORD,
     },
   })
 
-  const mailOptions = {
-    to: email,
-    subject: 'Realtime Support',
-    text: 'One of your customers on Corinna, just switched to realtime mode',
-  }
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.NODE_MAILER_EMAIL,
+    to,
+    subject,
+    text,
+    html,
+  })
+}
 
-  transporter.sendMail(mailOptions, function (error, info) {
-    if (error) {
-      console.log(error)
-    } else {
-      console.log('Email sent: ' + info.response)
-    }
+export const onMailer = async (email: string) => {
+  await sendMail({
+    to: email,
+    subject: 'Live support request',
+    text: 'A visitor on your website requested to speak with a person.',
   })
 }

@@ -1,132 +1,58 @@
 'use server'
+
 import { client } from '@/lib/prisma'
 import { clerkClient, currentUser } from '@clerk/nextjs/server'
+import crypto from 'crypto'
+
+const generatePublicKey = () => crypto.randomBytes(18).toString('hex')
 
 export const onIntegrateDomain = async (domain: string, icon: string) => {
   const user = await currentUser()
   if (!user) return
   try {
-    const subscription = await client.user.findUnique({
-      where: {
-        clerkId: user.id,
-      },
-      select: {
-        _count: {
-          select: {
-            domains: true,
-          },
-        },
-        subscription: {
-          select: {
-            plan: true,
-          },
-        },
+    const dbUser = await client.user.findUnique({ where: { clerkId: user.id }, select: { id: true } })
+    if (!dbUser) return { status: 400, message: 'User not found' }
+
+    const domainExists = await client.domain.findFirst({
+      where: { name: domain, members: { some: { userId: dbUser.id } } },
+    })
+    if (domainExists) return { status: 400, message: 'Domain already exists' }
+
+    const newDomain = await client.domain.create({
+      data: {
+        name: domain,
+        icon,
+        publicKey: generatePublicKey(),
+        members: { create: { userId: dbUser.id, role: 'OWNER' } },
+        chatBot: { create: { welcomeMessage: 'Hi! How can we help you today?' } },
       },
     })
-    const domainExists = await client.user.findFirst({
-      where: {
-        clerkId: user.id,
-        domains: {
-          some: {
-            name: domain,
-          },
-        },
-      },
-    })
-
-    if (!domainExists) {
-      if (
-        (subscription?.subscription?.plan == 'STANDARD' &&
-          subscription._count.domains < 1) ||
-        (subscription?.subscription?.plan == 'PRO' &&
-          subscription._count.domains < 5) ||
-        (subscription?.subscription?.plan == 'ULTIMATE' &&
-          subscription._count.domains < 10)
-      ) {
-        const newDomain = await client.user.update({
-          where: {
-            clerkId: user.id,
-          },
-          data: {
-            domains: {
-              create: {
-                name: domain,
-                icon,
-                chatBot: {
-                  create: {
-                    welcomeMessage: 'Hey there, have  a question? Text us here',
-                  },
-                },
-              },
-            },
-          },
-        })
-
-        if (newDomain) {
-          return { status: 200, message: 'Domain successfully added' }
-        }
-      }
-      return {
-        status: 400,
-        message:
-          "You've reached the maximum number of domains, upgrade your plan",
-      }
-    }
-    return {
-      status: 400,
-      message: 'Domain already exists',
-    }
+    if (newDomain) return { status: 200, message: 'Domain successfully added', domain: newDomain }
+    return { status: 400, message: 'Could not create domain' }
   } catch (error) {
     console.log(error)
   }
 }
 
-export const onGetSubscriptionPlan = async () => {
-  try {
-    const user = await currentUser()
-    if (!user) return
-    const plan = await client.user.findUnique({
-      where: {
-        clerkId: user.id,
-      },
-      select: {
-        subscription: {
-          select: {
-            plan: true,
-          },
-        },
-      },
-    })
-    if (plan) {
-      return plan.subscription?.plan
-    }
-  } catch (error) {
-    console.log(error)
-  }
-}
+export const onGetSubscriptionPlan = async () => null
 
 export const onGetAllAccountDomains = async () => {
   const user = await currentUser()
   if (!user) return
   try {
-    const domains = await client.user.findUnique({
-      where: {
-        clerkId: user.id,
-      },
+    const dbUser = await client.user.findUnique({
+      where: { clerkId: user.id },
       select: {
         id: true,
-        domains: {
+        memberships: {
           select: {
-            name: true,
-            icon: true,
-            id: true,
-            customer: {
+            domain: {
               select: {
-                chatRoom: {
-                  select: {
-                    id: true,
-                    live: true,
-                  },
+                name: true,
+                icon: true,
+                id: true,
+                customers: {
+                  select: { chatRooms: { select: { id: true, status: true } } },
                 },
               },
             },
@@ -134,21 +60,28 @@ export const onGetAllAccountDomains = async () => {
         },
       },
     })
-    return { ...domains }
+    if (!dbUser) return { id: undefined, domains: [] }
+    const domains = dbUser.memberships.map((m) => ({
+      name: m.domain.name,
+      icon: m.domain.icon ?? '',
+      id: m.domain.id,
+      customer: m.domain.customers.map((c) => ({
+        chatRoom: c.chatRooms.map((r) => ({ id: r.id, live: r.status === 'LIVE' })),
+      })),
+    }))
+    return { id: dbUser.id, domains }
   } catch (error) {
     console.log(error)
   }
 }
+
 export const onUpdatePassword = async (password: string) => {
   try {
     const user = await currentUser()
-
     if (!user) return null
-    const client = await clerkClient()
-    const update = await client.users.updateUser(user.id, { password })
-    if (update) {
-      return { status: 200, message: 'Password updated' }
-    }
+    const clerk = await clerkClient()
+    await clerk.users.updateUser(user.id, { password })
+    return { status: 200, message: 'Password updated' }
   } catch (error) {
     console.log(error)
   }
@@ -158,43 +91,32 @@ export const onGetCurrentDomainInfo = async (domain: string) => {
   const user = await currentUser()
   if (!user) return
   try {
-    const userDomain = await client.user.findUnique({
+    const dbUser = await client.user.findUnique({ where: { clerkId: user.id }, select: { id: true } })
+    if (!dbUser) return
+    const domainRecord = await client.domain.findFirst({
       where: {
-        clerkId: user.id,
+        name: domain,
+        members: { some: { userId: dbUser.id } },
       },
-      select: {
-        subscription: {
-          select: {
-            plan: true,
-          },
-        },
-        domains: {
-          where: {
-            name: {
-              contains: domain,
-            },
-          },
-          select: {
-            id: true,
-            name: true,
-            icon: true,
-            userId: true,
-            products: true,
-            chatBot: {
-              select: {
-                id: true,
-                welcomeMessage: true,
-                icon: true,
-                background: true,
-                textColor: true,
-              },
-            },
-          },
-        },
+      include: {
+        chatBot: true,
+        helpdesk: true,
+        filterQuestions: true,
+        members: { include: { user: true } },
       },
     })
-    if (userDomain) {
-      return userDomain
+    if (!domainRecord) return
+    // Legacy shape adapter for existing dashboard components
+    const chatBot = domainRecord.chatBot
+      ? {
+          ...domainRecord.chatBot,
+          icon: domainRecord.chatBot.avatarUrl,
+          background: domainRecord.chatBot.primaryColor,
+        }
+      : null
+    return {
+      subscription: { plan: 'STANDARD' as const },
+      domains: [{ ...domainRecord, userId: dbUser.id, products: [], chatBot }],
     }
   } catch (error) {
     console.log(error)
@@ -203,137 +125,57 @@ export const onGetCurrentDomainInfo = async (domain: string) => {
 
 export const onUpdateDomain = async (id: string, name: string) => {
   try {
-    //check if domain with name exists
-    const domainExists = await client.domain.findFirst({
-      where: {
-        name: {
-          contains: name,
-        },
-      },
-    })
-
-    if (!domainExists) {
-      const domain = await client.domain.update({
-        where: {
-          id,
-        },
-        data: {
-          name,
-        },
-      })
-
-      if (domain) {
-        return {
-          status: 200,
-          message: 'Domain updated',
-        }
-      }
-
-      return {
-        status: 400,
-        message: 'Oops something went wrong!',
-      }
-    }
-
-    return {
-      status: 400,
-      message: 'Domain with this name already exists',
-    }
+    const domain = await client.domain.update({ where: { id }, data: { name } })
+    if (domain) return { status: 200, message: 'Domain updated' }
+    return { status: 400, message: 'Oops something went wrong!' }
   } catch (error) {
     console.log(error)
+    return { status: 400, message: 'Could not update domain' }
   }
 }
 
 export const onChatBotImageUpdate = async (id: string, icon: string) => {
-  const user = await currentUser()
-
-  if (!user) return
-
   try {
     const domain = await client.domain.update({
-      where: {
-        id,
-      },
-      data: {
-        chatBot: {
-          update: {
-            data: {
-              icon,
-            },
-          },
-        },
-      },
+      where: { id },
+      data: { chatBot: { upsert: { create: { avatarUrl: icon }, update: { avatarUrl: icon } } } },
     })
-
-    if (domain) {
-      return {
-        status: 200,
-        message: 'Domain updated',
-      }
-    }
-
-    return {
-      status: 400,
-      message: 'Oops something went wrong!',
-    }
+    if (domain) return { status: 200, message: 'Chatbot updated' }
+    return { status: 400, message: 'Oops something went wrong!' }
   } catch (error) {
     console.log(error)
   }
 }
 
-export const onUpdateWelcomeMessage = async (
-  message: string,
-  domainId: string
-) => {
+export const onUpdateWelcomeMessage = async (message: string, domainId: string) => {
   try {
-    const update = await client.domain.update({
-      where: {
-        id: domainId,
-      },
-      data: {
-        chatBot: {
-          update: {
-            data: {
-              welcomeMessage: message,
-            },
-          },
-        },
-      },
+    await client.domain.update({
+      where: { id: domainId },
+      data: { chatBot: { upsert: { create: { welcomeMessage: message }, update: { welcomeMessage: message } } } },
     })
-
-    if (update) {
-      return { status: 200, message: 'Welcome message updated' }
-    }
+    return { status: 200, message: 'Welcome message updated' }
   } catch (error) {
     console.log(error)
   }
 }
 
-export const onUpdateChatBotTheme = async (
-  domainId: string,
-  background?: string,
-  textColor?: string
-) => {
+export const onUpdateChatBotTheme = async (domainId: string, background?: string, textColor?: string) => {
   try {
-    const update = await client.domain.update({
-      where: {
-        id: domainId,
-      },
+    await client.domain.update({
+      where: { id: domainId },
       data: {
         chatBot: {
-          update: {
-            data: {
-              ...(background !== undefined && { background }),
+          upsert: {
+            create: { primaryColor: background, textColor },
+            update: {
+              ...(background !== undefined && { primaryColor: background }),
               ...(textColor !== undefined && { textColor }),
             },
           },
         },
       },
     })
-
-    if (update) {
-      return { status: 200, message: 'Chatbot customization updated' }
-    }
+    return { status: 200, message: 'Chatbot customization updated' }
   } catch (error) {
     console.log(error)
   }
@@ -341,108 +183,37 @@ export const onUpdateChatBotTheme = async (
 
 export const onDeleteUserDomain = async (id: string) => {
   const user = await currentUser()
-
   if (!user) return
-
   try {
-    //first verify that domain belongs to user
-    const validUser = await client.user.findUnique({
-      where: {
-        clerkId: user.id,
-      },
-      select: {
-        id: true,
-      },
-    })
-
-    if (validUser) {
-      //check that domain belongs to this user and delete
-      const deletedDomain = await client.domain.delete({
-        where: {
-          userId: validUser.id,
-          id,
-        },
-        select: {
-          name: true,
-        },
-      })
-
-      if (deletedDomain) {
-        return {
-          status: 200,
-          message: `${deletedDomain.name} was deleted successfully`,
-        }
-      }
-    }
+    const dbUser = await client.user.findUnique({ where: { clerkId: user.id }, select: { id: true } })
+    if (!dbUser) return
+    const membership = await client.domainMember.findFirst({ where: { domainId: id, userId: dbUser.id, role: 'OWNER' } })
+    if (!membership) return { status: 403, message: 'Not authorized' }
+    const deleted = await client.domain.delete({ where: { id }, select: { name: true } })
+    return { status: 200, message: `${deleted.name} was deleted successfully` }
   } catch (error) {
     console.log(error)
   }
 }
 
-export const onCreateHelpDeskQuestion = async (
-  id: string,
-  question: string,
-  answer: string
-) => {
+export const onCreateHelpDeskQuestion = async (id: string, question: string, answer: string) => {
   try {
-    const helpDeskQuestion = await client.domain.update({
-      where: {
-        id,
-      },
-      data: {
-        helpdesk: {
-          create: {
-            question,
-            answer,
-          },
-        },
-      },
-      include: {
-        helpdesk: {
-          select: {
-            id: true,
-            question: true,
-            answer: true,
-          },
-        },
-      },
-    })
-
-    if (helpDeskQuestion) {
-      return {
-        status: 200,
-        message: 'New help desk question added',
-        questions: helpDeskQuestion.helpdesk,
-      }
-    }
-
-    return {
-      status: 400,
-      message: 'Oops! something went wrong',
-    }
+    await client.helpDesk.create({ data: { domainId: id, question, answer } })
+    const questions = await client.helpDesk.findMany({ where: { domainId: id }, select: { id: true, question: true, answer: true } })
+    return { status: 200, message: 'New help desk question added', questions }
   } catch (error) {
     console.log(error)
+    return { status: 400, message: 'Oops! something went wrong' }
   }
 }
 
 export const onGetAllHelpDeskQuestions = async (id: string) => {
   try {
     const questions = await client.helpDesk.findMany({
-      where: {
-        domainId: id,
-      },
-      select: {
-        question: true,
-        answer: true,
-        id: true,
-      },
+      where: { domainId: id },
+      select: { question: true, answer: true, id: true },
     })
-
-    return {
-      status: 200,
-      message: 'New help desk question added',
-      questions: questions,
-    }
+    return { status: 200, message: '', questions }
   } catch (error) {
     console.log(error)
   }
@@ -450,88 +221,29 @@ export const onGetAllHelpDeskQuestions = async (id: string) => {
 
 export const onCreateFilterQuestions = async (id: string, question: string) => {
   try {
-    const filterQuestion = await client.domain.update({
-      where: {
-        id,
-      },
-      data: {
-        filterQuestions: {
-          create: {
-            question,
-          },
-        },
-      },
-      include: {
-        filterQuestions: {
-          select: {
-            id: true,
-            question: true,
-          },
-        },
-      },
-    })
-
-    if (filterQuestion) {
-      return {
-        status: 200,
-        message: 'Filter question added',
-        questions: filterQuestion.filterQuestions,
-      }
-    }
-    return {
-      status: 400,
-      message: 'Oops! something went wrong',
-    }
+    await client.filterQuestions.create({ data: { domainId: id, question } })
+    const questions = await client.filterQuestions.findMany({ where: { domainId: id }, select: { id: true, question: true } })
+    return { status: 200, message: 'Filter question added', questions }
   } catch (error) {
     console.log(error)
+    return { status: 400, message: 'Oops! something went wrong' }
   }
 }
 
 export const onGetAllFilterQuestions = async (id: string) => {
   try {
     const questions = await client.filterQuestions.findMany({
-      where: {
-        domainId: id,
-      },
-      select: {
-        question: true,
-        id: true,
-      },
-      orderBy: {
-        question: 'asc',
-      },
+      where: { domainId: id },
+      select: { question: true, id: true },
+      orderBy: { question: 'asc' },
     })
-
-    return {
-      status: 200,
-      message: '',
-      questions: questions,
-    }
+    return { status: 200, message: '', questions }
   } catch (error) {
     console.log(error)
   }
 }
 
-export const onGetPaymentConnected = async () => {
-  try {
-    const user = await currentUser()
-    if (user) {
-      const connected = await client.user.findUnique({
-        where: {
-          clerkId: user.id,
-        },
-        select: {
-          stripeId: true,
-        },
-      })
-      if (connected) {
-        return connected.stripeId
-      }
-    }
-  } catch (error) {
-    console.log(error)
-  }
-}
+export const onGetPaymentConnected = async () => null
 
 export const onCreateNewDomainProduct = async (
   id: string,
@@ -539,29 +251,7 @@ export const onCreateNewDomainProduct = async (
   image: string,
   price: string
 ) => {
-  try {
-    const product = await client.domain.update({
-      where: {
-        id,
-      },
-      data: {
-        products: {
-          create: {
-            name,
-            image,
-            price: parseInt(price),
-          },
-        },
-      },
-    })
-
-    if (product) {
-      return {
-        status: 200,
-        message: 'Product successfully created',
-      }
-    }
-  } catch (error) {
-    console.log(error)
-  }
+  // Products removed in Phase 1 schema; placeholder for compatibility
+  void id; void name; void image; void price
+  return { status: 200, message: 'Not available' }
 }
