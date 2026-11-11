@@ -7,6 +7,10 @@ export type DomainSettingsProps = {
   domain?: string
   image?: any
   welcomeMessage?: string
+  background?: string
+  textColor?: string
+  botName?: string
+  branding?: string
 }
 
 export type HelpDeskQuestionsProps = {
@@ -61,6 +65,10 @@ export const DomainSettingsSchema = z
       .min(6, 'The message must be atleast 6 characters')
       .optional()
       .or(z.literal('').transform(() => undefined)),
+    background: z.string().optional().or(z.literal('').transform(() => undefined)),
+    textColor: z.string().optional().or(z.literal('').transform(() => undefined)),
+    botName: z.string().optional().or(z.literal('').transform(() => undefined)),
+    branding: z.string().optional().or(z.literal('').transform(() => undefined)),
   })
   .refine(
     (schema) => {

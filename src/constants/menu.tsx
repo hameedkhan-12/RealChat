@@ -1,3 +1,4 @@
+import React from 'react'
 import CalIcon from '@/icons/cal-icon'
 import ChatIcon from '@/icons/chat-icon'
 import DashboardIcon from '@/icons/dashboard-icon'
@@ -10,7 +11,7 @@ import TimerIcon from '@/icons/timer-icon'
 
 type SIDE_BAR_MENU_PROPS = {
   label: string
-  icon: JSX.Element
+  icon: React.ReactNode
   path: string
 }
 
@@ -49,7 +50,7 @@ export const SIDE_BAR_MENU: SIDE_BAR_MENU_PROPS[] = [
 
 type TABS_MENU_PROPS = {
   label: string
-  icon?: JSX.Element
+  icon?: React.ReactNode
 }
 
 export const TABS_MENU: TABS_MENU_PROPS[] = [

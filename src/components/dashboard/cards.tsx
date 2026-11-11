@@ -3,7 +3,7 @@ import React from 'react'
 type Props = {
   title: string
   value: number
-  icon: JSX.Element
+  icon: React.ReactNode
   sales?: boolean
 }
 

@@ -1,8 +1,10 @@
 import {
   onGetChatMessages,
+  onGetConversationMode,
   onGetDomainChatRooms,
   onOwnerSendMessage,
   onRealTimeChat,
+  onToggleRealtime,
   onViewUnReadMessages,
 } from '@/actions/conversation'
 import { useChatContext } from '@/context/user-chat-context'
@@ -15,8 +17,10 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
-export const useConversation = () => {
-  const { register, watch } = useForm({
+export const useConversation = (
+  domains?: { name: string; id: string; icon: string }[]
+) => {
+  const { register, watch, setValue } = useForm({
     resolver: zodResolver(ConversationSearchSchema),
     mode: 'onChange',
   })
@@ -36,8 +40,31 @@ export const useConversation = () => {
     }[]
   >([])
   const [loading, setLoading] = useState<boolean>(false)
+
+  // Auto-load the first domain's chat rooms on mount
+  useEffect(() => {
+    if (domains && domains.length > 0) {
+      const firstDomainId = domains[0]?.id
+      if (!firstDomainId) return
+      setValue('domain', firstDomainId)
+      setLoading(true)
+      onGetDomainChatRooms(firstDomainId)
+        .then((rooms) => {
+          if (rooms) {
+            setLoading(false)
+            setChatRooms(rooms.customer)
+          }
+        })
+        .catch((err) => {
+          console.log(err)
+          setLoading(false)
+        })
+    }
+  }, [])
+
   useEffect(() => {
     const search = watch(async (value) => {
+      if (!value.domain) return
       setLoading(true)
       try {
         const rooms = await onGetDomainChatRooms(value.domain)
@@ -47,6 +74,7 @@ export const useConversation = () => {
         }
       } catch (error) {
         console.log(error)
+        setLoading(false)
       }
     })
     return () => search.unsubscribe()
@@ -59,7 +87,7 @@ export const useConversation = () => {
       if (messages) {
         setChatRoom(id)
         loadMessages(false)
-        setChats(messages[0].message)
+        setChats(messages?.[0]?.message ?? [])
       }
     } catch (error) {
       console.log(error)
@@ -123,6 +151,9 @@ export const useChatWindow = () => {
     resolver: zodResolver(ChatBotMessageSchema),
     mode: 'onChange',
   })
+  const [liveMode, setLiveMode] = useState<boolean>(false)
+  const [liveLoading, setLiveLoading] = useState<boolean>(false)
+
   const onScrollToBottom = () => {
     messageWindowRef.current?.scroll({
       top: messageWindowRef.current.scrollHeight,
@@ -135,11 +166,24 @@ export const useChatWindow = () => {
     onScrollToBottom()
   }, [chats, messageWindowRef])
 
+  // Fetch current live mode state whenever chatRoom changes
+  useEffect(() => {
+    if (chatRoom) {
+      onGetConversationMode(chatRoom).then((mode) => {
+        if (mode) setLiveMode(mode.live)
+      })
+    }
+  }, [chatRoom])
+
   useEffect(() => {
     if (chatRoom) {
       pusherClient.subscribe(chatRoom)
       pusherClient.bind('realtime-mode', (data: any) => {
-        setChats((prev) => [...prev, data.chat])
+        setChats((prev) => {
+          // Avoid duplicate messages (sender already added locally)
+          if (prev.some((m) => m.id === data.chat?.id)) return prev
+          return [...prev, data.chat]
+        })
       })
 
       return () => {
@@ -152,20 +196,24 @@ export const useChatWindow = () => {
   const onHandleSentMessage = handleSubmit(async (values) => {
     try {
       reset()
+      if (!liveMode) {
+        onToggleRealtime(chatRoom!, true).then((res) => {
+          if (res?.chatRoom) setLiveMode(true)
+        })
+      }
       const message = await onOwnerSendMessage(
         chatRoom!,
         values.content,
         'assistant'
       )
-      //WIP: Remove this line
-      if (message) {
-        //remove this
-        // setChats((prev) => [...prev, message.message[0]])
-
+      if (message && message.message?.[0]) {
+        const newMsg = message.message[0]
+        // Update local chat history immediately so the sender sees their message
+        setChats((prev) => [...prev, newMsg])
         await onRealTimeChat(
           chatRoom!,
-          message.message[0].message,
-          message.message[0].id,
+          newMsg.message,
+          newMsg.id,
           'assistant'
         )
       }
@@ -174,6 +222,22 @@ export const useChatWindow = () => {
     }
   })
 
+  const onToggleLiveMode = async () => {
+    if (!chatRoom) return
+    setLiveLoading(true)
+    try {
+      const newMode = !liveMode
+      const result = await onToggleRealtime(chatRoom, newMode)
+      if (result?.chatRoom) {
+        setLiveMode(result.chatRoom.live)
+      }
+    } catch (error) {
+      console.log(error)
+    } finally {
+      setLiveLoading(false)
+    }
+  }
+
   return {
     messageWindowRef,
     register,
@@ -181,5 +245,8 @@ export const useChatWindow = () => {
     chats,
     loading,
     chatRoom,
+    liveMode,
+    liveLoading,
+    onToggleLiveMode,
   }
 }

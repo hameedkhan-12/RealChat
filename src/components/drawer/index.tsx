@@ -8,7 +8,7 @@ import {
 } from '../ui/drawer'
 
 type Props = {
-  onOpen: JSX.Element
+  onOpen: React.ReactNode
   children: React.ReactNode
   title: string
   description: string

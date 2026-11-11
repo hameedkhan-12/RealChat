@@ -1,4 +1,4 @@
-import { ZodType, z } from 'zod'
+import { z } from 'zod'
 import { ACCEPTED_FILE_TYPES, MAX_UPLOAD_SIZE } from './settings.schema'
 
 export type ConversationSearchProps = {
@@ -11,13 +11,31 @@ export type ChatBotMessageProps = {
   image?: any
 }
 
-export const ConversationSearchSchema: ZodType<ConversationSearchProps> =
-  z.object({
+export type ChatMessageType = {
+  role: 'assistant' | 'user'
+  content: string
+  link?: string
+  options?: string[]
+  step?: string
+  widget?: 'slot-picker' | 'meeting-booked' | 'chat-ended'
+  widgetData?: {
+    date?: string
+    slot?: string
+    brandName?: string
+    email?: string
+    name?: string
+    formattedDateTime?: string
+    duration?: string
+    timezone?: string
+  }
+}
+
+export const ConversationSearchSchema = z.object({
     query: z.string().min(1, { message: 'You must entery a search query' }),
     domain: z.string().min(1, { message: 'You must select a domain' }),
   })
 
-export const ChatBotMessageSchema: ZodType<ChatBotMessageProps> = z
+export const ChatBotMessageSchema = z
   .object({
     content: z
       .string()

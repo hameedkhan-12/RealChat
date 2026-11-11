@@ -49,6 +49,79 @@ export const onGetAllDomainBookings = async (domainId: string) => {
   }
 }
 
+export const onBookChatBotAppointment = async ({
+  domainId,
+  customerEmail,
+  customerName,
+  slot,
+  date,
+}: {
+  domainId: string
+  customerEmail: string
+  customerName?: string
+  slot: string
+  date: string
+}) => {
+  try {
+    let customer = await client.customer.findFirst({
+      where: {
+        domainId,
+        email: customerEmail,
+      },
+      include: {
+        chatRoom: true,
+      },
+    })
+
+    if (!customer) {
+      customer = await client.customer.create({
+        data: {
+          email: customerEmail,
+          domainId,
+          chatRoom: {
+            create: {},
+          },
+        },
+        include: {
+          chatRoom: true,
+        },
+      })
+    }
+
+    const parsedDate = new Date(date)
+    const booking = await client.bookings.create({
+      data: {
+        date: parsedDate,
+        slot,
+        email: customerEmail,
+        domainId,
+        customerId: customer.id,
+      },
+    })
+
+    if (customer.chatRoom?.[0]?.id) {
+      await client.chatMessage.create({
+        data: {
+          chatRoomId: customer.chatRoom[0].id,
+          role: 'assistant',
+          message: `📅 Meeting Booked: Discovery Intro Call on ${slot}, ${date}. Contact: ${customerName || customerEmail} (${customerEmail}).`,
+        },
+      })
+    }
+
+    return {
+      status: 200,
+      message: 'Booking successfully confirmed',
+      bookingId: booking.id,
+      customerId: customer.id,
+      chatRoomId: customer.chatRoom?.[0]?.id,
+    }
+  } catch (error) {
+    console.error('Error booking appointment from chatbot:', error)
+    return { status: 500, message: 'Failed to book appointment' }
+  }
+}
+
 export const onBookNewAppointment = async (
   domainId: string,
   customerId: string,

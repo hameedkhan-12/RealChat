@@ -27,7 +27,7 @@ const MaxMenu = ({ current, domains, onExpand, onSignOut }: Props) => {
           src="/images/logo.png"
           alt="LOGO"
           sizes="100vw"
-          className="animate-fade-in opacity-0 delay-300 fill-mode-forwards"
+          className="w-auto h-auto"
           style={{
             width: '50%',
             height: 'auto',
@@ -36,11 +36,11 @@ const MaxMenu = ({ current, domains, onExpand, onSignOut }: Props) => {
           height={0}
         />
         <Menu
-          className="cursor-pointer animate-fade-in opacity-0 delay-300 fill-mode-forwards"
+          className="cursor-pointer"
           onClick={onExpand}
         />
       </div>
-      <div className="animate-fade-in opacity-0 delay-300 fill-mode-forwards flex flex-col justify-between h-full pt-10">
+      <div className="flex flex-col justify-between h-full pt-10">
         <div className="flex flex-col">
           <p className="text-xs text-gray-500 mb-3">MENU</p>
           {SIDE_BAR_MENU.map((menu, key) => (

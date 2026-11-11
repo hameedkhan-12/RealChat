@@ -17,7 +17,13 @@ export const useSignInForm = () => {
   })
   const onHandleSubmit = methods.handleSubmit(
     async (values: UserLoginProps) => {
-      if (!isLoaded) return
+      if (!isLoaded) {
+        toast({
+          title: 'Please wait',
+          description: 'Authentication is still initializing. Please try again in a moment.',
+        })
+        return
+      }
 
       try {
         setLoading(true)
@@ -33,15 +39,29 @@ export const useSignInForm = () => {
             description: 'Welcome back!',
           })
           router.push('/dashboard')
+        } else {
+          setLoading(false)
+          toast({
+            title: 'Error',
+            description: 'Unable to sign in. Please try again.',
+          })
         }
       } catch (error: any) {
         setLoading(false)
-        if (error.errors[0].code === 'form_password_incorrect')
-          toast({
-            title: 'Error',
-            description: 'email/password is incorrect try again',
-          })
+        console.error('Sign-in error:', error)
+        const errorMessage =
+          error.errors?.[0]?.longMessage ||
+          error.errors?.[0]?.message ||
+          error.message ||
+          'Something went wrong. Please try again.'
+        toast({
+          title: 'Error',
+          description: errorMessage,
+        })
       }
+    },
+    (errors) => {
+      console.error('Form validation errors:', errors)
     }
   )
 

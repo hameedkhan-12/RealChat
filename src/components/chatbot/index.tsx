@@ -15,6 +15,9 @@ const AiChatBot = (props: Props) => {
     onChats,
     register,
     onStartChatting,
+    onSelectOption,
+    onBookSlot,
+    onRestartChat,
     onAiTyping,
     messageWindowRef,
     currentBot,
@@ -24,8 +27,10 @@ const AiChatBot = (props: Props) => {
     errors,
   } = useChatBot()
 
+  const clientIcon = currentBot?.chatBot?.icon || (currentBot as any)?.icon
+
   return (
-    <div className="h-screen flex flex-col justify-end items-end gap-4">
+    <div className="flex flex-col justify-end items-end gap-2 p-3" style={{ background: 'transparent' }}>
       {botOpened && (
         <BotWindow
           errors={errors}
@@ -37,27 +42,55 @@ const AiChatBot = (props: Props) => {
           help={currentBot?.chatBot?.helpdesk}
           theme={currentBot?.chatBot?.background}
           textColor={currentBot?.chatBot?.textColor}
+          botIcon={clientIcon}
           chats={onChats}
           register={register}
           onChat={onStartChatting}
           onResponding={onAiTyping}
+          onSelectOption={onSelectOption}
+          onBookSlot={onBookSlot}
+          onRestartChat={onRestartChat}
+          onClose={onOpenChatBot}
         />
       )}
       <div
+        style={{
+          backgroundColor: currentBot?.chatBot?.background || '#FFFFFF',
+          color: currentBot?.chatBot?.textColor || '#000000',
+          display: loading ? 'none' : 'flex',
+        }}
         className={cn(
-          'rounded-full relative cursor-pointer shadow-md w-20 h-20 flex items-center justify-center bg-grandis',
-          loading ? 'invisible' : 'visible'
+          'rounded-full relative cursor-pointer shadow-xl w-[58px] h-[58px] items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 border border-neutral-200/90 text-black',
+          botOpened && 'hidden'
         )}
         onClick={onOpenChatBot}
       >
-        {currentBot?.chatBot?.icon ? (
-          <Image
-            src={`https://ucarecdn.com/${currentBot.chatBot.icon}/`}
-            alt="bot"
-            fill
-          />
+        {clientIcon ? (
+          <div className="relative w-full h-full rounded-full overflow-hidden">
+            <Image
+              src={
+                clientIcon.startsWith('http')
+                  ? clientIcon
+                  : `https://ucarecdn.com/${clientIcon}/`
+              }
+              alt="bot icon"
+              fill
+              className="object-cover"
+            />
+          </div>
         ) : (
-          <BotIcon />
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
         )}
       </div>
     </div>

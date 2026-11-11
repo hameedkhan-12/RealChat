@@ -65,3 +65,30 @@ export const getMonthName = (month: number) => {
     ? 'Nov'
     : month == 12 && 'Dec'
 }
+
+export const parseBotConfig = (
+  textColor?: string | null,
+  background?: string | null
+) => {
+  let color = textColor || '#000000'
+  let botName = ''
+  let branding = ''
+
+  if (textColor && textColor.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(textColor)
+      color = parsed.color || '#000000'
+      botName = parsed.botName || ''
+      branding = parsed.branding || ''
+    } catch {
+      // fallback to raw textColor
+    }
+  }
+
+  return {
+    textColor: color,
+    theme: background || '#FFFFFF',
+    botName,
+    branding,
+  }
+}

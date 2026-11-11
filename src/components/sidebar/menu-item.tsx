@@ -5,7 +5,7 @@ import React from 'react'
 type Props = {
   size: 'max' | 'min'
   label: string
-  icon: JSX.Element
+  icon: React.ReactNode
   path?: string
   current?: string
   onSignOut?(): void
@@ -18,12 +18,12 @@ const MenuItem = ({ size, path, icon, label, current, onSignOut }: Props) => {
         <Link
           onClick={onSignOut}
           className={cn(
-            'flex items-center gap-2 px-1 py-2 rounded-lg my-1',
+            'flex items-center gap-2 px-1 py-2 rounded-lg my-1 transition-colors',
             !current
-              ? 'text-gray-500'
+              ? 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'
               : current == path
-              ? 'bg-white font-bold text-black'
-              : 'text-gray-500'
+              ? 'bg-white dark:bg-neutral-800 font-bold text-black dark:text-white shadow-sm'
+              : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'
           )}
           href={path ? `/${path}` : '#'}
         >
@@ -35,12 +35,12 @@ const MenuItem = ({ size, path, icon, label, current, onSignOut }: Props) => {
         <Link
           onClick={onSignOut}
           className={cn(
+            'flex items-center justify-center rounded-lg py-2 my-1 transition-colors',
             !current
-              ? 'text-gray-500'
+              ? 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'
               : current == path
-              ? 'bg-white font-bold text-black'
-              : 'text-gray-500',
-            'rounded-lg py-2 my-1'
+              ? 'bg-white dark:bg-neutral-800 font-bold text-black dark:text-white shadow-sm'
+              : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'
           )}
           href={path ? `/${path}` : '#'}
         >

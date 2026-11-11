@@ -1,8 +1,7 @@
 'use client'
-import { Loader } from '@/components/loader'
 import { AuthContextProvider } from '@/context/use-auth-context'
 import { useSignUpForm } from '@/hooks/sign-up/use-sign-up'
-import React from 'react'
+import React, { useState } from 'react'
 import { FormProvider } from 'react-hook-form'
 
 type Props = {
@@ -10,17 +9,28 @@ type Props = {
 }
 
 const SignUpFormProvider = ({ children }: Props) => {
-  const { methods, onHandleSubmit, loading } = useSignUpForm()
+  const { methods, onHandleSubmit, loading, setLoading, onGenerateOTP } =
+    useSignUpForm()
+  const [currentStep, setCurrentStep] = useState<number>(1)
 
   return (
-    <AuthContextProvider>
+    <AuthContextProvider
+      value={{
+        currentStep,
+        setCurrentStep,
+        loading,
+        setLoading,
+        onGenerateOTP,
+      }}
+    >
       <FormProvider {...methods}>
         <form
           onSubmit={onHandleSubmit}
           className="h-full"
         >
           <div className="flex flex-col justify-between gap-3 h-full">
-            <Loader loading={loading}>{children}</Loader>
+            {children}
+            <div id="clerk-captcha" />
           </div>
         </form>
       </FormProvider>

@@ -122,7 +122,7 @@ export default async function Home() {
               href={`/blogs/${post.id}`}
               key={post.id}
             >
-              <Card className="flex flex-col gap-2 rounded-xl overflow-hidden h-full hover:bg-gray-100">
+              <Card className="flex flex-col gap-2 rounded-xl overflow-hidden h-full hover:bg-gray-100 dark:hover:bg-muted transition-colors">
                 <div className="relative w-full aspect-video">
                   <Image
                     src={`${process.env.CLOUDWAYS_UPLOADS_URL}${post.image}`}

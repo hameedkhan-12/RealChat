@@ -9,6 +9,7 @@ import {
   onUpdateDomain,
   onUpdatePassword,
   onUpdateWelcomeMessage,
+  onUpdateChatBotTheme,
 } from '@/actions/settings'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -84,6 +85,9 @@ export const useSettings = (id: string) => {
     handleSubmit,
     formState: { errors },
     reset,
+    setValue,
+    watch,
+    control,
   } = useForm<DomainSettingsProps>({
     resolver: zodResolver(DomainSettingsSchema),
   })
@@ -103,7 +107,7 @@ export const useSettings = (id: string) => {
         })
       }
     }
-    if (values.image[0]) {
+    if (values.image?.[0]) {
       const uploaded = await upload.uploadFile(values.image[0])
       const image = await onChatBotImageUpdate(id, uploaded.uuid)
       if (image) {
@@ -123,7 +127,30 @@ export const useSettings = (id: string) => {
         })
       }
     }
-    reset()
+    if (
+      values.background ||
+      values.textColor ||
+      values.botName !== undefined ||
+      values.branding !== undefined
+    ) {
+      const packedData = JSON.stringify({
+        color: values.textColor || '#ffffff',
+        botName: values.botName || '',
+        branding: values.branding || '',
+      })
+      const themeRes = await onUpdateChatBotTheme(
+        id,
+        values.background,
+        packedData
+      )
+      if (themeRes) {
+        toast({
+          title: 'Success',
+          description: themeRes.message,
+        })
+      }
+    }
+    reset(values)
     router.refresh()
     setLoading(false)
   })
@@ -147,6 +174,9 @@ export const useSettings = (id: string) => {
     loading,
     onDeleteDomain,
     deleting,
+    setValue,
+    watch,
+    control,
   }
 }
 

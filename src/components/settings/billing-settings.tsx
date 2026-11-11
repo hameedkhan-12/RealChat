@@ -32,7 +32,7 @@ const BillingSettings = async (props: Props) => {
           description="Tell us about yourself! What do you do? Let’s tailor your experience so it best suits you."
           trigger={
             plan && plan === 'STANDARD' ? (
-              <Card className="border-dashed bg-cream border-gray-400 w-full cursor-pointer h-[270px] flex justify-center items-center">
+              <Card className="border-dashed bg-cream dark:bg-card border-gray-400 w-full cursor-pointer h-[270px] flex justify-center items-center">
                 <CardContent className="flex gap-2 items-center">
                   <div className="rounded-full border-2 p-1">
                     <Plus className="text-gray-400" />

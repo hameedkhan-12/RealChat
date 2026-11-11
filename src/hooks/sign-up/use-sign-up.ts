@@ -29,9 +29,16 @@ export const useSignUpForm = () => {
     password: string,
     onNext: React.Dispatch<React.SetStateAction<number>>
   ) => {
-    if (!isLoaded) return
+    if (!isLoaded) {
+      toast({
+        title: 'Please wait',
+        description: 'Authentication is still initializing. Please try again in a moment.',
+      })
+      return
+    }
 
     try {
+      setLoading(true)
       await signUp.create({
         emailAddress: email,
         password: password,
@@ -39,11 +46,18 @@ export const useSignUpForm = () => {
 
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' })
 
-      onNext((prev) => prev + 1)
+      setLoading(false)
+      onNext(3)
     } catch (error: any) {
+      setLoading(false)
+      console.error('Sign-up generate OTP error:', error)
       toast({
         title: 'Error',
-        description: error.errors[0].longMessage,
+        description:
+          error.errors?.[0]?.longMessage ||
+          error.errors?.[0]?.message ||
+          error.message ||
+          'Unable to send verification code. Please check your email and password.',
       })
     }
   }
@@ -59,46 +73,78 @@ export const useSignUpForm = () => {
         })
 
         if (completeSignUp.status !== 'complete') {
-          return { message: 'Something went wrong!' }
+          setLoading(false)
+          toast({
+            title: 'Error',
+            description: 'Verification incomplete. Please check the code and try again.',
+          })
+          return
         }
 
-        if (completeSignUp.status == 'complete') {
-          if (!signUp.createdUserId) return
+        const userId = completeSignUp.createdUserId || signUp.createdUserId
+        if (!userId) {
+          setLoading(false)
+          toast({
+            title: 'Error',
+            description: 'User ID missing from Clerk registration.',
+          })
+          return
+        }
 
-          const registered = await onCompleteUserRegistration(
-            values.fullname,
-            signUp.createdUserId,
-            values.type
-          )
+        const registered = await onCompleteUserRegistration(
+          values.fullname,
+          userId,
+          values.type
+        )
 
-          if (registered?.status == 200 && registered.user) {
-            await setActive({
-              session: completeSignUp.createdSessionId,
-            })
+        if (registered?.status === 200 && registered.user) {
+          await setActive({
+            session: completeSignUp.createdSessionId,
+          })
 
-            setLoading(false)
-            router.push('/dashboard')
-          }
-
-          if (registered?.status == 400) {
-            toast({
-              title: 'Error',
-              description: 'Something went wrong!',
-            })
-          }
+          setLoading(false)
+          toast({
+            title: 'Success',
+            description: 'Account created successfully!',
+          })
+          router.push('/dashboard')
+        } else {
+          setLoading(false)
+          toast({
+            title: 'Error',
+            description: 'Failed to complete registration in database.',
+          })
         }
       } catch (error: any) {
+        setLoading(false)
+        console.error('Sign-up error:', error)
         toast({
           title: 'Error',
-          description: error.errors[0].longMessage,
+          description:
+            error.errors?.[0]?.longMessage ||
+            error.errors?.[0]?.message ||
+            error.message ||
+            'Something went wrong!',
+        })
+      }
+    },
+    (errors) => {
+      console.error('Form validation errors on sign up:', errors)
+      const firstError = Object.values(errors)[0]
+      if (firstError?.message) {
+        toast({
+          title: 'Validation Error',
+          description: String(firstError.message),
         })
       }
     }
   )
+
   return {
     methods,
     onHandleSubmit,
     onGenerateOTP,
     loading,
+    setLoading,
   }
 }

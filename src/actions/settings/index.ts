@@ -185,6 +185,8 @@ export const onGetCurrentDomainInfo = async (domain: string) => {
                 id: true,
                 welcomeMessage: true,
                 icon: true,
+                background: true,
+                textColor: true,
               },
             },
           },
@@ -301,6 +303,36 @@ export const onUpdateWelcomeMessage = async (
 
     if (update) {
       return { status: 200, message: 'Welcome message updated' }
+    }
+  } catch (error) {
+    console.log(error)
+  }
+}
+
+export const onUpdateChatBotTheme = async (
+  domainId: string,
+  background?: string,
+  textColor?: string
+) => {
+  try {
+    const update = await client.domain.update({
+      where: {
+        id: domainId,
+      },
+      data: {
+        chatBot: {
+          update: {
+            data: {
+              ...(background !== undefined && { background }),
+              ...(textColor !== undefined && { textColor }),
+            },
+          },
+        },
+      },
+    })
+
+    if (update) {
+      return { status: 200, message: 'Chatbot customization updated' }
     }
   } catch (error) {
     console.log(error)
