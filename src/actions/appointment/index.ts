@@ -4,6 +4,7 @@ import { client } from '@/lib/prisma'
 import { currentUser } from '@clerk/nextjs/server'
 import { requireDomainAccess } from '@/lib/auth'
 import { logger } from '@/lib/logger'
+import { checkSlotConflict } from '@/lib/slots'
 
 export type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -53,15 +54,49 @@ export const onBookChatBotAppointment = async ({
     const startsAt = new Date(`${date} ${slot}`)
     const safeStart = Number.isNaN(startsAt.getTime()) ? new Date() : startsAt
     const endsAt = new Date(safeStart.getTime() + 30 * 60 * 1000)
+
+    // Transactional booking with conflict handling
+    const conflict = await checkSlotConflict(domainId, safeStart, endsAt)
+    if (conflict) {
+      return { ok: false, error: 'Slot no longer available', status: 409 }
+    }
+
     let customer = await client.customer.findFirst({ where: { domainId, email: customerEmail } })
     if (!customer) {
       customer = await client.customer.create({ data: { domainId, email: customerEmail, name: customerName } })
     }
-    const booking = await client.booking.create({
-      data: { domainId, customerId: customer.id, email: customerEmail, name: customerName, startsAt: safeStart, endsAt, status: 'CONFIRMED' },
+
+    const booking = await client.$transaction(async (tx) => {
+      // Re-check conflict inside transaction
+      const existing = await tx.booking.findFirst({
+        where: {
+          domainId,
+          status: 'CONFIRMED',
+          startsAt: { lt: endsAt },
+          endsAt: { gt: safeStart },
+        },
+      })
+      if (existing) {
+        throw new Error('SLOT_CONFLICT')
+      }
+      return tx.booking.create({
+        data: {
+          domainId,
+          customerId: customer.id,
+          email: customerEmail,
+          name: customerName ?? null,
+          startsAt: safeStart,
+          endsAt,
+          status: 'CONFIRMED',
+        },
+      })
     })
+
     return { ok: true, data: { status: 200, message: 'Booking confirmed', bookingId: booking.id, customerId: customer.id } }
-  } catch (error) {
+  } catch (error: any) {
+    if (error.message === 'SLOT_CONFLICT') {
+      return { ok: false, error: 'Slot no longer available', status: 409 }
+    }
     logger.error('onBookChatBotAppointment failed', { error: String(error), domainId })
     return { ok: false, error: 'Failed to book appointment', status: 500 }
   }
