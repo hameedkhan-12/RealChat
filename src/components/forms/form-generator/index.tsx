@@ -1,6 +1,7 @@
-import { Input } from '@/components/ui/input'
+﻿import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { strict } from 'assert'
+// @ts-ignore - @hookform/error-message exports ErrorMessage component
 import { ErrorMessage } from '@hookform/error-message'
 import React from 'react'
 import { FieldErrors, FieldValues, UseFormRegister } from 'react-hook-form'
@@ -53,7 +54,7 @@ const FormGenerator = ({
           <ErrorMessage
             errors={errors}
             name={name}
-            render={({ message }) => (
+            render={({ message }: { message: string }) => (
               <p className="text-red-400 mt-2">
                 {message === 'Required' ? '' : message}
               </p>
@@ -83,7 +84,7 @@ const FormGenerator = ({
           <ErrorMessage
             errors={errors}
             name={name}
-            render={({ message }) => (
+            render={({ message }: { message: string }) => (
               <p className="text-red-400 mt-2">
                 {message === 'Required' ? '' : message}
               </p>
@@ -109,7 +110,7 @@ const FormGenerator = ({
           <ErrorMessage
             errors={errors}
             name={name}
-            render={({ message }) => (
+            render={({ message }: { message: string }) => (
               <p className="text-red-400 mt-2">
                 {message === 'Required' ? '' : message}
               </p>

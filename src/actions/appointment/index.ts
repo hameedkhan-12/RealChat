@@ -23,8 +23,7 @@ export const onDomainCustomerResponses = async (customerId: string): Promise<Act
 }
 
 export const onGetAllDomainBookings = async (domainId: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(domainId)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: access.status ?? 403 }
+  await requireDomainAccess(domainId)
   try {
     const bookings = await client.booking.findMany({
       where: { domainId },
@@ -93,8 +92,7 @@ export const saveAnswers = async (questions: Record<string, string>, customerId:
   try {
     const customer = await client.customer.findUnique({ where: { id: customerId }, select: { domainId: true } })
     if (customer) {
-      const access = await requireDomainAccess(customer.domainId)
-      if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: access.status ?? 403 }
+      await requireDomainAccess(customer.domainId)
     }
     for (const [question, answered] of Object.entries(questions || {})) {
       await client.customerResponses.create({ data: { customerId, question, answered } })
@@ -136,14 +134,18 @@ export const onGetAllBookingsForCurrentUser = async (clerkId: string) => {
   }
 }
 
-export const getUserAppointments = async () => {
+export const getUserAppointments = async (): Promise<ActionResult> => {
   try {
     const user = await currentUser()
-    if (!user) return 0
-    return await client.booking.count({
-      where: { domain: { members: { some: { user: { clerkId: user.id } } } } },
-    })
+    if (!user) return { ok: false, error: 'UNAUTHORIZED', status: 401 }
+    return {
+      ok: true,
+      data: await client.booking.count({
+        where: { domain: { members: { some: { user: { clerkId: user.id } } } } },
+      }),
+    }
   } catch (error) {
     logger.error('getUserAppointments failed', { error: String(error) })
+    return { ok: false, error: 'Failed to load appointments', status: 500 }
   }
 }

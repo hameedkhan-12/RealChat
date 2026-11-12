@@ -59,9 +59,9 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
     try {
       loadMessages(true)
       const messages = await onGetChatMessages(id)
-      if (messages?.ok && messages.data?.[0]?.message) {
+      if (messages?.ok && Array.isArray(messages.data) && messages.data[0]?.message) {
         setChatRoom(id)
-        setChats((messages.data[0].message ?? []) as ChatMsg[])
+        setChats(((messages.data as any[])[0]?.message ?? []) as ChatMsg[])
       }
     } finally {
       loadMessages(false)

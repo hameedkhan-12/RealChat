@@ -9,8 +9,7 @@ export type ActionResult<T = unknown> =
   | { ok: false; error: string; status?: number }
 
 export const onToggleRealtime = async (id: string, state: boolean): Promise<ActionResult> => {
-  const access = await requireResourceAccess('chatRoom', id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: access.status ?? 403 }
+  await requireResourceAccess('chatRoom', id)
   try {
     const chatRoom = await client.chatRoom.update({
       where: { id },
@@ -32,8 +31,7 @@ export const onToggleRealtime = async (id: string, state: boolean): Promise<Acti
 }
 
 export const onGetConversationMode = async (id: string) => {
-  const access = await requireResourceAccess('chatRoom', id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: access.status ?? 403 }
+  await requireResourceAccess('chatRoom', id)
   try {
     const mode = await client.chatRoom.findUnique({ where: { id }, select: { status: true } })
     return mode ? { live: mode.status === 'LIVE' } : null
@@ -43,8 +41,7 @@ export const onGetConversationMode = async (id: string) => {
 }
 
 export const onGetDomainChatRooms = async (id: string) => {
-  const access = await requireDomainAccessId(id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: access.status ?? 403 }
+  await requireResourceAccess('chatRoom', id)
   try {
     const domain = await client.domain.findUnique({
       where: { id },
@@ -83,9 +80,8 @@ export const onGetDomainChatRooms = async (id: string) => {
   }
 }
 
-export const onGetChatMessages = async (id: string) => {
-  const access = await requireResourceAccess('chatRoom', id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: access.status ?? 403 }
+export const onGetChatMessages = async (id: string): Promise<ActionResult> => {
+  await requireResourceAccess('chatRoom', id)
   try {
     const room = await client.chatRoom.findUnique({
       where: { id },
@@ -119,8 +115,7 @@ export const onGetChatMessages = async (id: string) => {
 }
 
 export const onViewUnReadMessages = async (id: string) => {
-  const access = await requireResourceAccess('chatRoom', id)
-  if ('ok' in access && !access.ok) return
+  await requireResourceAccess('chatRoom', id)
   try {
     await client.chatMessage.updateMany({ where: { chatRoomId: id }, data: { seen: true } })
   } catch (error) {
@@ -143,8 +138,7 @@ export const onOwnerSendMessage = async (
   message: string,
   role: 'assistant' | 'user'
 ): Promise<ActionResult> => {
-  const access = await requireResourceAccess('chatRoom', chatroom)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: access.status ?? 403 }
+  await requireResourceAccess('chatRoom', chatroom)
   try {
     const created = await client.chatMessage.create({
       data: { chatRoomId: chatroom, message, senderType: role === 'user' ? 'VISITOR' : 'AGENT' },
@@ -160,9 +154,4 @@ export const onOwnerSendMessage = async (
     logger.error('onOwnerSendMessage failed', { error: String(error), chatRoomId: chatroom })
     return { ok: false, error: 'Failed to send message', status: 500 }
   }
-}
-
-async function requireDomainAccessId(id: string) {
-  const { requireDomainAccess } = await import('@/lib/auth')
-  return requireDomainAccess(id)
 }

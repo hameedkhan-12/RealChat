@@ -1,9 +1,7 @@
 import AiChatBot from '@/components/chatbot'
 import React from 'react'
 
-type Props = {}
-
-const ChatBot = (props: Props) => {
+const ChatBot = async ({ searchParams }: { searchParams: { [key: string]: string } }) => {
   return (
     <div className="bg-transparent w-full h-full overflow-hidden select-none">
       <style>{`
@@ -24,7 +22,7 @@ const ChatBot = (props: Props) => {
           background-color: transparent !important;
         }
       `}</style>
-      <AiChatBot />
+      <AiChatBot publicKey={searchParams.key} />
     </div>
   )
 }

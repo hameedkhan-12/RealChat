@@ -3,6 +3,7 @@ import { FieldErrors, FieldValues, UseFormRegister } from 'react-hook-form'
 import { Label } from '../ui/label'
 import { Input } from '../ui/input'
 import { Edit } from 'lucide-react'
+// @ts-ignore - @hookform/error-message exports ErrorMessage component
 import { ErrorMessage } from '@hookform/error-message'
 
 type Props = {
@@ -35,7 +36,7 @@ const UploadButton = ({ errors, label, register }: Props) => {
       <ErrorMessage
         errors={errors}
         name="image"
-        render={({ message }) => (
+        render={({ message }: { message: string }) => (
           <p className="text-red-400 mt-2">
             {message === 'Required' ? '' : message}
           </p>

@@ -5,12 +5,14 @@ import { BotWindow } from './window'
 import { cn } from '@/lib/utils'
 import Image from 'next/image'
 
-const AiChatBot = () => {
+type Props = { publicKey?: string }
+
+const AiChatBot = ({ publicKey }: Props) => {
   const {
-    onOpenChatBot, botOpened, onChats, register, onStartChatting, onSelectOption,
+    onOpenChatBot, botOpened, onChats, register, onSelectOption,
     onBookSlot, onRestartChat, onAiTyping, messageWindowRef, currentBot, loading,
-    onRealTime, setOnChats, errors,
-  } = useChatBot()
+    onRealTime, setOnChats, errors, config, sessionToken, chatRoomId, sendMessage, getValues,
+  } = useChatBot(publicKey)
 
   const bot = currentBot as any
   const clientIcon = bot?.chatBot?.avatarUrl || bot?.chatBot?.icon || bot?.icon
@@ -25,15 +27,15 @@ const AiChatBot = () => {
           setChat={setOnChats}
           realtimeMode={onRealTime}
           helpdesk={(bot?.helpdesk as any) || []}
-          domainName={bot?.name || 'Assistant'}
+          domainName={config?.domainName || bot?.name || 'Assistant'}
           ref={messageWindowRef}
           help={bot?.chatBot?.helpdesk}
-          theme={theme}
-          textColor={textColor}
-          botIcon={clientIcon}
+          theme={config?.chatBot?.primaryColor || theme}
+          textColor={config?.chatBot?.textColor || textColor}
+          botIcon={config?.chatBot?.avatarUrl || clientIcon}
           chats={onChats}
           register={register}
-          onChat={onStartChatting}
+          onChat={() => { sendMessage(getValues().content || '') }}
           onResponding={onAiTyping}
           onSelectOption={onSelectOption}
           onBookSlot={onBookSlot}

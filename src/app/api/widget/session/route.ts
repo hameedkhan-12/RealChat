@@ -32,13 +32,26 @@ export const POST = async (req: Request) => {
   const turnstileOk = await verifyTurnstile(turnstileToken)
   if (!turnstileOk) return NextResponse.json({ error: 'Turnstile verification failed' }, { status: 403 })
 
-  const customer = await client.customer.findFirst({ where: { domainId: domain.id, email: body.customerEmail } })
+  // Create Customer ONCE if email provided
+  let customer = null
+  if (body.customerEmail) {
+    customer = await client.customer.findFirst({ where: { domainId: domain.id, email: body.customerEmail } })
+    if (!customer) {
+      customer = await client.customer.create({
+        data: { domainId: domain.id, email: body.customerEmail, name: body.customerName },
+      })
+    }
+  }
+
+  // Create ChatRoom ONCE for this session
   const chatRoom = await client.chatRoom.create({
     data: {
       domainId: domain.id,
       customerId: customer?.id ?? null,
       status: 'BOT',
       sessionTokenHash: '',
+      pageUrl: body.pageUrl || null,
+      utm: body.utm ?? null,
     },
   })
 

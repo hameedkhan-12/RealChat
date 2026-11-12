@@ -147,8 +147,7 @@ export const onUpdateDomain = async (id: string, name: string): Promise<ActionRe
 }
 
 export const onChatBotImageUpdate = async (id: string, icon: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(id)
   try {
     const domain = await client.domain.update({
       where: { id },
@@ -163,8 +162,7 @@ export const onChatBotImageUpdate = async (id: string, icon: string): Promise<Ac
 }
 
 export const onUpdateWelcomeMessage = async (message: string, domainId: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(domainId)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(domainId)
   try {
     await client.domain.update({
       where: { id: domainId },
@@ -178,8 +176,7 @@ export const onUpdateWelcomeMessage = async (message: string, domainId: string):
 }
 
 export const onUpdateChatBotTheme = async (domainId: string, background?: string, textColor?: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(domainId)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(domainId)
   try {
     await client.domain.update({
       where: { id: domainId },
@@ -203,8 +200,7 @@ export const onUpdateChatBotTheme = async (domainId: string, background?: string
 }
 
 export const onDeleteUserDomain = async (id: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(id, 'OWNER')
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(id, 'OWNER')
   try {
     const deleted = await client.domain.delete({ where: { id }, select: { name: true } })
     return { ok: true, data: { message: `${deleted.name} was deleted successfully` } }
@@ -215,8 +211,7 @@ export const onDeleteUserDomain = async (id: string): Promise<ActionResult> => {
 }
 
 export const onCreateHelpDeskQuestion = async (id: string, question: string, answer: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(id)
   try {
     await client.helpDesk.create({ data: { domainId: id, question, answer } })
     const questions = await client.helpDesk.findMany({ where: { domainId: id }, select: { id: true, question: true, answer: true } })
@@ -228,8 +223,7 @@ export const onCreateHelpDeskQuestion = async (id: string, question: string, ans
 }
 
 export const onGetAllHelpDeskQuestions = async (id: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(id)
   try {
     const questions = await client.helpDesk.findMany({
       where: { domainId: id },
@@ -243,8 +237,7 @@ export const onGetAllHelpDeskQuestions = async (id: string): Promise<ActionResul
 }
 
 export const onCreateFilterQuestions = async (id: string, question: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(id)
   try {
     await client.filterQuestions.create({ data: { domainId: id, question } })
     const questions = await client.filterQuestions.findMany({ where: { domainId: id }, select: { id: true, question: true } })
@@ -256,8 +249,7 @@ export const onCreateFilterQuestions = async (id: string, question: string): Pro
 }
 
 export const onGetAllFilterQuestions = async (id: string): Promise<ActionResult> => {
-  const access = await requireDomainAccess(id)
-  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
+  await requireDomainAccess(id)
   try {
     const questions = await client.filterQuestions.findMany({
       where: { domainId: id },

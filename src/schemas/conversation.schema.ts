@@ -27,6 +27,7 @@ export type ChatMessageType = {
     formattedDateTime?: string
     duration?: string
     timezone?: string
+    actions?: { type: string; label: string }[]
   }
 }
 
