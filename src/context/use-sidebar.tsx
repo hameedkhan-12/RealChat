@@ -25,10 +25,8 @@ const okChatRoom = (res: any) => res && res.ok && typeof res.data === 'object' ?
 
 const onActivateRealtime = async (e: any) => {
   try {
-    const realtime = await onToggleRealtime(
-      chatRoom!,
-      e.target.ariaChecked == 'true' ? false : true
-    )
+    const isLive = e.target.ariaChecked == 'true'
+    const realtime = await onToggleRealtime(chatRoom!, isLive ? 'BOT' : 'LIVE')
     if (realtime?.ok) {
       const cr = okChatRoom(realtime)
       setRealtime(!!(cr?.live))

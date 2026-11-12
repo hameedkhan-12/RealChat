@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import {
   onGetChatMessages,
@@ -8,6 +8,8 @@ import {
   onRealTimeChat,
   onToggleRealtime,
   onViewUnReadMessages,
+  onCloseConversation,
+  onReturnToBot,
 } from '@/actions/conversation'
 import { useChatContext } from '@/context/user-chat-context'
 import { getMonthName } from '@/lib/utils'
@@ -24,10 +26,9 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
     mode: 'onChange',
   })
   const { setLoading: loadMessages, setChats, setChatRoom } = useChatContext()
-  const [chatRooms, setChatRooms] = useState<
-    { chatRoom: { id: string; createdAt: Date; message: { message: string; createdAt: Date; seen: boolean }[] }[]; email: string | null }[]
-  >([])
+  const [chatRooms, setChatRooms] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [filter, setFilter] = useState<'WAITING_AGENT' | 'LIVE' | 'CLOSED' | 'BOT' | undefined>(undefined)
 
   useEffect(() => {
     if (domains && domains.length > 0) {
@@ -35,25 +36,35 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
       if (!firstDomainId) return
       setValue('domain', firstDomainId)
       setLoading(true)
-      onGetDomainChatRooms(firstDomainId)
-        .then((rooms) => { if (rooms) setChatRooms(rooms.customer as any) })
+      onGetDomainChatRooms(firstDomainId, filter)
+        .then((rooms) => { if (rooms) setChatRooms(rooms.customer) })
         .finally(() => setLoading(false))
     }
-  }, [])
+  }, [domains, filter])
 
   useEffect(() => {
     const search = watch(async (value) => {
       if (!value.domain) return
       setLoading(true)
       try {
-        const rooms = await onGetDomainChatRooms(value.domain)
-        if (rooms) setChatRooms(rooms.customer as any)
+        const rooms = await onGetDomainChatRooms(value.domain, filter)
+        if (rooms) setChatRooms(rooms.customer)
       } finally {
         setLoading(false)
       }
     })
     return () => search.unsubscribe()
-  }, [watch])
+  }, [watch, filter])
+
+  const onSetFilter = (f: 'WAITING_AGENT' | 'LIVE' | 'CLOSED' | 'BOT' | undefined) => {
+    setFilter(f)
+    if (domains && domains.length > 0) {
+      setLoading(true)
+      onGetDomainChatRooms(domains[0]!.id, f)
+        .then((rooms) => { if (rooms) setChatRooms(rooms.customer) })
+        .finally(() => setLoading(false))
+    }
+  }
 
   const onGetActiveChatMessages = async (id: string) => {
     try {
@@ -67,7 +78,24 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
       loadMessages(false)
     }
   }
-  return { register, chatRooms, loading, onGetActiveChatMessages }
+
+  const onCloseChat = async (id: string) => {
+    const res = await onCloseConversation(id)
+    if (res?.ok) {
+      setFilter(undefined)
+      setChatRooms(prev => prev.map((c: any) => c.chatRoom.map((r: any) => r.id === id ? { ...r, status: 'CLOSED' } : r)).flat())
+    }
+  }
+
+  const onReturnChatToBot = async (id: string) => {
+    const res = await onReturnToBot(id)
+    if (res?.ok) {
+      setFilter(undefined)
+      setChatRooms((prev: any[]) => prev.map((c: any) => c.chatRoom.map((r: any) => r.id === id ? { ...r, status: 'BOT', assignedToUserId: null } : r)).flat())
+    }
+  }
+
+  return { register, chatRooms, loading, onGetActiveChatMessages, onCloseChat, onReturnChatToBot, onSetFilter, filter }
 }
 
 export const useChatTime = (createdAt: Date, roomId: string) => {
@@ -117,15 +145,10 @@ export const useChatWindow = () => {
     }
   }, [chatRoom])
 
-  // TODO(Phase 2): subscribe to private Pusher channel for realtime updates
-
   const onHandleSentMessage = handleSubmit(async (values) => {
     try {
       reset()
       if (!chatRoom) return
-      if (!liveMode) {
-        onToggleRealtime(chatRoom, true).then((res) => { if (res?.ok) setLiveMode(true) })
-      }
       const message = await onOwnerSendMessage(chatRoom, values.content, 'assistant')
       const msgData = (message as any)?.data
       if (message?.ok && msgData?.message?.[0]) {
@@ -142,8 +165,9 @@ export const useChatWindow = () => {
     if (!chatRoom) return
     setLiveLoading(true)
     try {
-      const result = await onToggleRealtime(chatRoom, !liveMode)
-      if (result?.ok && (result.data as any)?.chatRoom) setLiveMode(true)
+      const targetStatus = liveMode ? 'BOT' : 'LIVE'
+      const result = await onToggleRealtime(chatRoom, targetStatus)
+      if (result?.ok) setLiveMode(targetStatus === 'LIVE')
     } finally {
       setLiveLoading(false)
     }
