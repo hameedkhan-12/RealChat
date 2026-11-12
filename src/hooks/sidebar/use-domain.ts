@@ -13,6 +13,10 @@ const upload = new UploadClient({
   publicKey: process.env.NEXT_PUBLIC_UPLOAD_CARE_PUBLIC_KEY as string,
 })
 
+function okMessage(res: any): string | null {
+  return res && res.ok && typeof res.data === 'object' ? String((res.data as any).message ?? '') : null
+}
+
 export const useDomain = () => {
   const {
     register,
@@ -37,14 +41,20 @@ export const useDomain = () => {
     setLoading(true)
     const uploaded = await upload.uploadFile(values.image[0])
     const domain = await onIntegrateDomain(values.domain, uploaded.uuid)
-    if (domain) {
+    if (domain?.ok) {
       reset()
       setLoading(false)
       toast({
-        title: domain.status == 200 ? 'Success' : 'Error',
-        description: domain.message,
+        title: 'Success',
+        description: okMessage(domain),
       })
       router.refresh()
+    } else if (domain) {
+      setLoading(false)
+      toast({
+        title: 'Error',
+        description: domain.error ?? 'Failed to add domain',
+      })
     }
   })
 

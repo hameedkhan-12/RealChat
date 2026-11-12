@@ -30,38 +30,41 @@ export const usePortal = (
 
   const onPrev = () => setStep((prev) => prev - 1)
 
-  const onBookAppointment = handleSubmit(async (values) => {
-    try {
-      setLoading(true)
-      const questions = Object.keys(values)
-        .filter((key) => key.startsWith('question'))
-        .reduce((obj: any, key) => {
-          obj[key.split('question-')[1]] = values[key]
-          return obj
-        }, {})
+  function okMessage(res: any): string | null {
+  return res && res.ok && typeof res.data === 'object' ? String((res.data as any).message ?? '') : null
+}
 
-      const savedAnswers = await saveAnswers(questions, customerId)
+const onBookAppointment = handleSubmit(async (values) => {
+  try {
+    setLoading(true)
+    const questions = Object.keys(values)
+      .filter((key) => key.startsWith('question'))
+      .reduce((obj: any, key) => {
+        obj[key.split('question-')[1]] = values[key]
+        return obj
+      }, {})
 
-      if (savedAnswers) {
-        const booked = await onBookNewAppointment(
-          domainId,
-          customerId,
-          values.slot,
-          values.date,
-          email
-        )
-        if (booked && booked.status == 200) {
-          toast({
-            title: 'Success',
-            description: booked.message,
-          })
-          setStep(3)
-        }
+    const savedAnswers = await saveAnswers(questions, customerId)
 
-        setLoading(false)
+    if (savedAnswers?.ok) {
+      const booked = await onBookNewAppointment(
+        domainId,
+        customerId,
+        values.slot,
+        values.date,
+        email
+      )
+      if (booked?.ok) {
+        toast({
+          title: 'Success',
+          description: okMessage(booked),
+        })
+        setStep(3)
       }
-    } catch (error) {}
-  })
+      setLoading(false)
+    }
+  } catch (error) {}
+})
 
   const onSelectedTimeSlot = (slot: string) => setSelectedSlot(slot)
 

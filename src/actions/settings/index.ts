@@ -1,22 +1,28 @@
-'use server'
+﻿'use server'
 
 import { client } from '@/lib/prisma'
 import { clerkClient, currentUser } from '@clerk/nextjs/server'
+import { requireDomainAccess } from '@/lib/auth'
+import { logger } from '@/lib/logger'
 import crypto from 'crypto'
 
 const generatePublicKey = () => crypto.randomBytes(18).toString('hex')
 
-export const onIntegrateDomain = async (domain: string, icon: string) => {
+export type ActionResult<T = unknown> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; status?: number }
+
+export const onIntegrateDomain = async (domain: string, icon: string): Promise<ActionResult> => {
   const user = await currentUser()
-  if (!user) return
+  if (!user) return { ok: false, error: 'UNAUTHORIZED', status: 401 }
   try {
     const dbUser = await client.user.findUnique({ where: { clerkId: user.id }, select: { id: true } })
-    if (!dbUser) return { status: 400, message: 'User not found' }
+    if (!dbUser) return { ok: false, error: 'User not found', status: 400 }
 
     const domainExists = await client.domain.findFirst({
       where: { name: domain, members: { some: { userId: dbUser.id } } },
     })
-    if (domainExists) return { status: 400, message: 'Domain already exists' }
+    if (domainExists) return { ok: false, error: 'Domain already exists', status: 400 }
 
     const newDomain = await client.domain.create({
       data: {
@@ -27,10 +33,11 @@ export const onIntegrateDomain = async (domain: string, icon: string) => {
         chatBot: { create: { welcomeMessage: 'Hi! How can we help you today?' } },
       },
     })
-    if (newDomain) return { status: 200, message: 'Domain successfully added', domain: newDomain }
-    return { status: 400, message: 'Could not create domain' }
+    if (newDomain) return { ok: true, data: { message: 'Domain successfully added', domain: newDomain } }
+    return { ok: false, error: 'Could not create domain', status: 400 }
   } catch (error) {
-    console.log(error)
+    logger.error('onIntegrateDomain failed', { error: String(error) })
+    return { ok: false, error: 'Failed to create domain', status: 500 }
   }
 }
 
@@ -51,6 +58,8 @@ export const onGetAllAccountDomains = async () => {
                 name: true,
                 icon: true,
                 id: true,
+                publicKey: true,
+                timezone: true,
                 customers: {
                   select: { chatRooms: { select: { id: true, status: true } } },
                 },
@@ -65,13 +74,15 @@ export const onGetAllAccountDomains = async () => {
       name: m.domain.name,
       icon: m.domain.icon ?? '',
       id: m.domain.id,
+      publicKey: m.domain.publicKey,
+      timezone: m.domain.timezone,
       customer: m.domain.customers.map((c) => ({
         chatRoom: c.chatRooms.map((r) => ({ id: r.id, live: r.status === 'LIVE' })),
       })),
     }))
     return { id: dbUser.id, domains }
   } catch (error) {
-    console.log(error)
+    logger.error('onGetAllAccountDomains failed', { error: String(error) })
   }
 }
 
@@ -81,9 +92,10 @@ export const onUpdatePassword = async (password: string) => {
     if (!user) return null
     const clerk = await clerkClient()
     await clerk.users.updateUser(user.id, { password })
-    return { status: 200, message: 'Password updated' }
+    return { ok: true, data: { message: 'Password updated' } }
   } catch (error) {
-    console.log(error)
+    logger.error('onUpdatePassword failed', { error: String(error) })
+    return null
   }
 }
 
@@ -106,7 +118,6 @@ export const onGetCurrentDomainInfo = async (domain: string) => {
       },
     })
     if (!domainRecord) return
-    // Legacy shape adapter for existing dashboard components
     const chatBot = domainRecord.chatBot
       ? {
           ...domainRecord.chatBot,
@@ -119,47 +130,56 @@ export const onGetCurrentDomainInfo = async (domain: string) => {
       domains: [{ ...domainRecord, userId: dbUser.id, products: [], chatBot }],
     }
   } catch (error) {
-    console.log(error)
+    logger.error('onGetCurrentDomainInfo failed', { error: String(error) })
   }
 }
 
-export const onUpdateDomain = async (id: string, name: string) => {
+export const onUpdateDomain = async (id: string, name: string): Promise<ActionResult> => {
+  await requireDomainAccess(id, 'OWNER')
   try {
     const domain = await client.domain.update({ where: { id }, data: { name } })
-    if (domain) return { status: 200, message: 'Domain updated' }
-    return { status: 400, message: 'Oops something went wrong!' }
+    if (domain) return { ok: true, data: { message: 'Domain updated' } }
+    return { ok: false, error: 'Domain not found', status: 404 }
   } catch (error) {
-    console.log(error)
-    return { status: 400, message: 'Could not update domain' }
+    logger.error('onUpdateDomain failed', { error: String(error) })
+    return { ok: false, error: 'Could not update domain', status: 500 }
   }
 }
 
-export const onChatBotImageUpdate = async (id: string, icon: string) => {
+export const onChatBotImageUpdate = async (id: string, icon: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(id)
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
     const domain = await client.domain.update({
       where: { id },
       data: { chatBot: { upsert: { create: { avatarUrl: icon }, update: { avatarUrl: icon } } } },
     })
-    if (domain) return { status: 200, message: 'Chatbot updated' }
-    return { status: 400, message: 'Oops something went wrong!' }
+    if (domain) return { ok: true, data: { message: 'Chatbot updated' } }
+    return { ok: false, error: 'Domain not found', status: 404 }
   } catch (error) {
-    console.log(error)
+    logger.error('onChatBotImageUpdate failed', { error: String(error) })
+    return { ok: false, error: 'Could not update chatbot', status: 500 }
   }
 }
 
-export const onUpdateWelcomeMessage = async (message: string, domainId: string) => {
+export const onUpdateWelcomeMessage = async (message: string, domainId: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(domainId)
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
     await client.domain.update({
       where: { id: domainId },
       data: { chatBot: { upsert: { create: { welcomeMessage: message }, update: { welcomeMessage: message } } } },
     })
-    return { status: 200, message: 'Welcome message updated' }
+    return { ok: true, data: { message: 'Welcome message updated' } }
   } catch (error) {
-    console.log(error)
+    logger.error('onUpdateWelcomeMessage failed', { error: String(error) })
+    return { ok: false, error: 'Failed to update welcome message', status: 500 }
   }
 }
 
-export const onUpdateChatBotTheme = async (domainId: string, background?: string, textColor?: string) => {
+export const onUpdateChatBotTheme = async (domainId: string, background?: string, textColor?: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(domainId)
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
     await client.domain.update({
       where: { id: domainId },
@@ -175,71 +195,79 @@ export const onUpdateChatBotTheme = async (domainId: string, background?: string
         },
       },
     })
-    return { status: 200, message: 'Chatbot customization updated' }
+    return { ok: true, data: { message: 'Chatbot customization updated' } }
   } catch (error) {
-    console.log(error)
+    logger.error('onUpdateChatBotTheme failed', { error: String(error) })
+    return { ok: false, error: 'Could not update chatbot theme', status: 500 }
   }
 }
 
-export const onDeleteUserDomain = async (id: string) => {
-  const user = await currentUser()
-  if (!user) return
+export const onDeleteUserDomain = async (id: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(id, 'OWNER')
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
-    const dbUser = await client.user.findUnique({ where: { clerkId: user.id }, select: { id: true } })
-    if (!dbUser) return
-    const membership = await client.domainMember.findFirst({ where: { domainId: id, userId: dbUser.id, role: 'OWNER' } })
-    if (!membership) return { status: 403, message: 'Not authorized' }
     const deleted = await client.domain.delete({ where: { id }, select: { name: true } })
-    return { status: 200, message: `${deleted.name} was deleted successfully` }
+    return { ok: true, data: { message: `${deleted.name} was deleted successfully` } }
   } catch (error) {
-    console.log(error)
+    logger.error('onDeleteUserDomain failed', { error: String(error) })
+    return { ok: false, error: 'Could not delete domain', status: 500 }
   }
 }
 
-export const onCreateHelpDeskQuestion = async (id: string, question: string, answer: string) => {
+export const onCreateHelpDeskQuestion = async (id: string, question: string, answer: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(id)
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
     await client.helpDesk.create({ data: { domainId: id, question, answer } })
     const questions = await client.helpDesk.findMany({ where: { domainId: id }, select: { id: true, question: true, answer: true } })
-    return { status: 200, message: 'New help desk question added', questions }
+    return { ok: true, data: { message: 'New help desk question added', questions } }
   } catch (error) {
-    console.log(error)
-    return { status: 400, message: 'Oops! something went wrong' }
+    logger.error('onCreateHelpDeskQuestion failed', { error: String(error) })
+    return { ok: false, error: 'Oops! something went wrong', status: 400 }
   }
 }
 
-export const onGetAllHelpDeskQuestions = async (id: string) => {
+export const onGetAllHelpDeskQuestions = async (id: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(id)
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
     const questions = await client.helpDesk.findMany({
       where: { domainId: id },
       select: { question: true, answer: true, id: true },
     })
-    return { status: 200, message: '', questions }
+    return { ok: true, data: { message: '', questions } }
   } catch (error) {
-    console.log(error)
+    logger.error('onGetAllHelpDeskQuestions failed', { error: String(error) })
+    return { ok: false, error: 'Oops! something went wrong', status: 400 }
   }
 }
 
-export const onCreateFilterQuestions = async (id: string, question: string) => {
+export const onCreateFilterQuestions = async (id: string, question: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(id)
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
     await client.filterQuestions.create({ data: { domainId: id, question } })
     const questions = await client.filterQuestions.findMany({ where: { domainId: id }, select: { id: true, question: true } })
-    return { status: 200, message: 'Filter question added', questions }
+    return { ok: true, data: { message: 'Filter question added', questions } }
   } catch (error) {
-    console.log(error)
-    return { status: 400, message: 'Oops! something went wrong' }
+    logger.error('onCreateFilterQuestions failed', { error: String(error) })
+    return { ok: false, error: 'Oops! something went wrong', status: 400 }
   }
 }
 
-export const onGetAllFilterQuestions = async (id: string) => {
+export const onGetAllFilterQuestions = async (id: string): Promise<ActionResult> => {
+  const access = await requireDomainAccess(id)
+  if ('ok' in access && !access.ok) return { ok: false, error: access.error, status: 403 }
   try {
     const questions = await client.filterQuestions.findMany({
       where: { domainId: id },
       select: { question: true, id: true },
       orderBy: { question: 'asc' },
     })
-    return { status: 200, message: '', questions }
+    return { ok: true, data: { message: '', questions } }
   } catch (error) {
-    console.log(error)
+    logger.error('onGetAllFilterQuestions failed', { error: String(error) })
+    return { ok: false, error: 'Oops! something went wrong', status: 400 }
   }
 }
 
@@ -250,8 +278,8 @@ export const onCreateNewDomainProduct = async (
   name: string,
   image: string,
   price: string
-) => {
+): Promise<ActionResult> => {
   // Products removed in Phase 1 schema; placeholder for compatibility
   void id; void name; void image; void price
-  return { status: 200, message: 'Not available' }
+  return { ok: true, data: { message: 'Not available' } }
 }

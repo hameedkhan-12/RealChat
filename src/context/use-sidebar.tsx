@@ -8,41 +8,48 @@ import { onGetConversationMode, onToggleRealtime } from '@/actions/conversation'
 import { useClerk } from '@clerk/nextjs'
 
 const useSideBar = () => {
-  const [expand, setExpand] = useState<boolean | undefined>(undefined)
+  const [expand, setExpand] = useState<boolean>(false)
   const router = useRouter()
   const pathname = usePathname()
   const { toast } = useToast()
   const [realtime, setRealtime] = useState<boolean>(false)
   const [loading, setLoading] = useState<boolean>(false)
 
-  const { chatRoom } = useChatContext()
+const { chatRoom } = useChatContext()
 
-  const onActivateRealtime = async (e: any) => {
-    try {
-      const realtime = await onToggleRealtime(
-        chatRoom!,
-        e.target.ariaChecked == 'true' ? false : true
-      )
-      if (realtime) {
-        setRealtime(realtime.chatRoom.live)
-        toast({
-          title: 'Success',
-          description: realtime.message,
-        })
-      }
-    } catch (error) {
-      console.log(error)
-    }
-  }
+function okMessage(res: any): string | null {
+  return res && res.ok && typeof res.data === 'object' ? String((res.data as any).message ?? '') : null
+}
 
-  const onGetCurrentMode = async () => {
-    setLoading(true)
-    const mode = await onGetConversationMode(chatRoom!)
-    if (mode) {
-      setRealtime(mode.live)
-      setLoading(false)
+const okChatRoom = (res: any) => res && res.ok && typeof res.data === 'object' ? (res.data as any).chatRoom : null
+
+const onActivateRealtime = async (e: any) => {
+  try {
+    const realtime = await onToggleRealtime(
+      chatRoom!,
+      e.target.ariaChecked == 'true' ? false : true
+    )
+    if (realtime?.ok) {
+      const cr = okChatRoom(realtime)
+      setRealtime(!!(cr?.live))
+      toast({
+        title: 'Success',
+        description: okMessage(realtime),
+      })
     }
+  } catch (error) {
+    console.log(error)
   }
+}
+
+const onGetCurrentMode = async () => {
+  setLoading(true)
+  const mode = await onGetConversationMode(chatRoom!)
+  if (mode) {
+    setRealtime(!!mode?.live)
+    setLoading(false)
+  }
+}
 
   useEffect(() => {
     if (chatRoom) {

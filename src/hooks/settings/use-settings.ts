@@ -45,6 +45,16 @@ export const useThemeMode = () => {
   }
 }
 
+function okMessage(res: any): string | null {
+  return res && res.ok && typeof res.data === 'object' ? String((res.data as any).message ?? '') : null
+}
+function okStatus(res: any): number | null {
+  return res && res.ok && typeof res.data === 'object' ? Number((res.data as any).status ?? 200) : null
+}
+function okQuestions(res: any): any[] | null {
+  return res && res.ok && typeof res.data === 'object' ? (res.data as any).questions ?? null : null
+}
+
 export const useChangePassword = () => {
   const {
     register,
@@ -62,10 +72,10 @@ export const useChangePassword = () => {
     try {
       setLoading(true)
       const updated = await onUpdatePassword(values.password)
-      if (updated) {
+      if (updated?.ok) {
         reset()
         setLoading(false)
-        toast({ title: 'Success', description: updated.message })
+        toast({ title: 'Success', description: okMessage(updated) })
       }
     } catch (error) {
       console.log(error)
@@ -100,30 +110,30 @@ export const useSettings = (id: string) => {
     setLoading(true)
     if (values.domain) {
       const domain = await onUpdateDomain(id, values.domain)
-      if (domain) {
+      if (domain?.ok) {
         toast({
           title: 'Success',
-          description: domain.message,
+          description: okMessage(domain),
         })
       }
     }
     if (values.image?.[0]) {
       const uploaded = await upload.uploadFile(values.image[0])
       const image = await onChatBotImageUpdate(id, uploaded.uuid)
-      if (image) {
+      if (image?.ok) {
         toast({
-          title: image.status == 200 ? 'Success' : 'Error',
-          description: image.message,
+          title: okStatus(image) === 200 ? 'Success' : 'Error',
+          description: okMessage(image),
         })
         setLoading(false)
       }
     }
     if (values.welcomeMessage) {
       const message = await onUpdateWelcomeMessage(values.welcomeMessage, id)
-      if (message) {
+      if (message?.ok) {
         toast({
           title: 'Success',
-          description: message.message,
+          description: okMessage(message),
         })
       }
     }
@@ -143,10 +153,10 @@ export const useSettings = (id: string) => {
         values.background,
         packedData
       )
-      if (themeRes) {
+      if (themeRes?.ok) {
         toast({
           title: 'Success',
-          description: themeRes.message,
+          description: okMessage(themeRes),
         })
       }
     }
@@ -158,10 +168,10 @@ export const useSettings = (id: string) => {
   const onDeleteDomain = async () => {
     setDeleting(true)
     const deleted = await onDeleteUserDomain(id)
-    if (deleted) {
+    if (deleted?.ok) {
       toast({
         title: 'Success',
-        description: deleted.message,
+        description: okMessage(deleted),
       })
       setDeleting(false)
       router.refresh()
@@ -202,11 +212,11 @@ export const useHelpDesk = (id: string) => {
       values.question,
       values.answer
     )
-    if (question) {
-      setIsQuestions(question.questions!)
+    if (question?.ok) {
+      setIsQuestions(okQuestions(question)!)
       toast({
-        title: question.status == 200 ? 'Success' : 'Error',
-        description: question.message,
+        title: okStatus(question) === 200 ? 'Success' : 'Error',
+        description: okMessage(question),
       })
       setLoading(false)
       reset()
@@ -216,8 +226,8 @@ export const useHelpDesk = (id: string) => {
   const onGetQuestions = async () => {
     setLoading(true)
     const questions = await onGetAllHelpDeskQuestions(id)
-    if (questions) {
-      setIsQuestions(questions.questions)
+    if (questions?.ok) {
+      setIsQuestions(okQuestions(questions)!)
       setLoading(false)
     }
   }
@@ -253,11 +263,11 @@ export const useFilterQuestions = (id: string) => {
   const onAddFilterQuestions = handleSubmit(async (values) => {
     setLoading(true)
     const questions = await onCreateFilterQuestions(id, values.question)
-    if (questions) {
-      setIsQuestions(questions.questions!)
+    if (questions?.ok) {
+      setIsQuestions(okQuestions(questions)!)
       toast({
-        title: questions.status == 200 ? 'Success' : 'Error',
-        description: questions.message,
+        title: okStatus(questions) === 200 ? 'Success' : 'Error',
+        description: okMessage(questions),
       })
       reset()
       setLoading(false)
@@ -267,8 +277,8 @@ export const useFilterQuestions = (id: string) => {
   const onGetQuestions = async () => {
     setLoading(true)
     const questions = await onGetAllFilterQuestions(id)
-    if (questions) {
-      setIsQuestions(questions.questions)
+    if (questions?.ok) {
+      setIsQuestions(okQuestions(questions)!)
       setLoading(false)
     }
   }
@@ -308,11 +318,11 @@ export const useProducts = (domainId: string) => {
         uploaded.uuid,
         values.price
       )
-      if (product) {
+      if (product?.ok) {
         reset()
         toast({
           title: 'Success',
-          description: product.message,
+          description: okMessage(product),
         })
         setLoading(false)
       }

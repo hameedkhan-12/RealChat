@@ -8,9 +8,13 @@ import PersonIcon from '@/icons/person-icon'
 import React from 'react'
 
 const Page = async () => {
-  const clients = await getUserClients()
-  const bookings = await getUserAppointments()
-  const plan = await getUserPlanInfo()
+  const clientsRes = await getUserClients()
+  const bookingsRes = await getUserAppointments()
+  const planRes = await getUserPlanInfo()
+
+  const clients = clientsRes?.ok ? (clientsRes.data as number) : 0
+  const bookings = bookingsRes?.ok ? (bookingsRes.data as number) : 0
+  const planData = planRes?.ok ? (planRes.data as any) : null
 
   return (
     <>
@@ -24,7 +28,7 @@ const Page = async () => {
           <div>
             <h2 className="font-bold text-2xl">Plan Usage</h2>
             <p className="text-sm font-light">Overview of your domains and leads</p>
-            <PlanUsage plan={(plan?.plan as any) || 'STANDARD'} credits={plan?.credits || 0} domains={plan?.domains || 0} clients={clients || 0} />
+            <PlanUsage plan={(planData?.plan as any) || 'STANDARD'} credits={planData?.credits || 0} domains={planData?.domains || 0} clients={clients || 0} />
           </div>
         </div>
       </div>

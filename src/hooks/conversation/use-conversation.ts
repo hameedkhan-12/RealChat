@@ -59,9 +59,9 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
     try {
       loadMessages(true)
       const messages = await onGetChatMessages(id)
-      if (messages) {
+      if (messages?.ok && messages.data?.[0]?.message) {
         setChatRoom(id)
-        setChats((messages?.[0]?.message ?? []) as ChatMsg[])
+        setChats((messages.data[0].message ?? []) as ChatMsg[])
       }
     } finally {
       loadMessages(false)
@@ -113,7 +113,7 @@ export const useChatWindow = () => {
 
   useEffect(() => {
     if (chatRoom) {
-      onGetConversationMode(chatRoom).then((mode) => { if (mode) setLiveMode(mode.live) })
+      onGetConversationMode(chatRoom).then((mode) => { if (mode) setLiveMode(!!mode.live) })
     }
   }, [chatRoom])
 
@@ -124,11 +124,12 @@ export const useChatWindow = () => {
       reset()
       if (!chatRoom) return
       if (!liveMode) {
-        onToggleRealtime(chatRoom, true).then((res) => { if (res?.chatRoom) setLiveMode(true) })
+        onToggleRealtime(chatRoom, true).then((res) => { if (res?.ok) setLiveMode(true) })
       }
       const message = await onOwnerSendMessage(chatRoom, values.content, 'assistant')
-      if (message && message.message?.[0]) {
-        const newMsg = message.message[0] as ChatMsg
+      const msgData = (message as any)?.data
+      if (message?.ok && msgData?.message?.[0]) {
+        const newMsg = msgData.message[0] as ChatMsg
         setChats((prev) => [...prev, newMsg] as any)
         await onRealTimeChat(chatRoom, newMsg.message, newMsg.id, 'assistant')
       }
@@ -142,7 +143,7 @@ export const useChatWindow = () => {
     setLiveLoading(true)
     try {
       const result = await onToggleRealtime(chatRoom, !liveMode)
-      if (result?.chatRoom) setLiveMode((result.chatRoom as any).live)
+      if (result?.ok && (result.data as any)?.chatRoom) setLiveMode(true)
     } finally {
       setLiveLoading(false)
     }
