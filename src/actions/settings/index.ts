@@ -31,6 +31,15 @@ export const onIntegrateDomain = async (domain: string, icon: string): Promise<A
         publicKey: generatePublicKey(),
         members: { create: { userId: dbUser.id, role: 'OWNER' } },
         chatBot: { create: { welcomeMessage: 'Hi! How can we help you today?' } },
+        flowSteps: {
+          create: [
+            { position: 1, key: 'buy_or_rent', type: 'CHOICE', prompt: 'Are you looking to buy or rent a property?', options: [{ label: 'Buy', value: 'buy', nextStepKey: 'property_type' }, { label: 'Rent', value: 'rent', nextStepKey: 'property_type' }], required: true, mapsTo: 'NONE', isActive: true },
+            { position: 2, key: 'property_type', type: 'CHOICE', prompt: 'What type of property interests you?', options: [{ label: 'Apartment', value: 'apartment' }, { label: 'House', value: 'house' }, { label: 'Villa', value: 'villa' }, { label: 'Office', value: 'office' }], required: true, mapsTo: 'NONE', isActive: true },
+            { position: 3, key: 'budget', type: 'TEXT', prompt: 'What is your budget range?', options: [], required: true, mapsTo: 'NONE', isActive: true },
+            { position: 4, key: 'name', type: 'TEXT', prompt: "May I have your name, please?", options: [], required: true, mapsTo: 'NAME', isActive: true },
+            { position: 5, key: 'contact', type: 'CHOICE', prompt: 'How should we contact you?', options: [{ label: 'Email', value: 'email' }, { label: 'Phone', value: 'phone' }], required: true, mapsTo: 'NONE', isActive: true },
+          ],
+        },
       },
     })
     if (newDomain) return { ok: true, data: { message: 'Domain successfully added', domain: newDomain } }

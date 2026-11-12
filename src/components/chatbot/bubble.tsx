@@ -27,7 +27,7 @@ const Bubble = ({
   botIcon,
   theme,
   textColor,
-  brandName = 'J7 Group',
+  brandName = 'Assistant',
   isLatest = true,
   onSelectOption,
   onBookSlot,

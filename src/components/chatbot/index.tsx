@@ -1,6 +1,6 @@
 'use client'
 import { useChatBot } from '@/hooks/chatbot/use-chatbot'
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { BotWindow } from './window'
 import { cn } from '@/lib/utils'
 import Image from 'next/image'
@@ -18,6 +18,20 @@ const AiChatBot = ({ publicKey }: Props) => {
   const clientIcon = bot?.chatBot?.avatarUrl || bot?.chatBot?.icon || bot?.icon
   const theme = bot?.chatBot?.primaryColor || bot?.chatBot?.background || '#FFFFFF'
   const textColor = bot?.chatBot?.textColor || '#000000'
+  const position = bot?.chatBot?.position || 'BOTTOM_RIGHT'
+  const lang = bot?.chatBot?.defaultLocale || 'en'
+  const isRTL = lang === 'ar'
+
+  // Apply CSS variables to root for the widget iframe
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const root = document.documentElement
+    root.style.setProperty('--widget-theme', theme)
+    root.style.setProperty('--widget-text', textColor)
+    root.style.setProperty('--widget-position', position)
+    root.style.setProperty('--widget-lang', lang)
+    root.dir = isRTL ? 'rtl' : 'ltr'
+  }, [theme, textColor, position, lang, isRTL])
 
   return (
     <div className="flex flex-col justify-end items-end gap-2 p-3" style={{ background: 'transparent' }}>
@@ -45,7 +59,11 @@ const AiChatBot = ({ publicKey }: Props) => {
       )}
       <div
         style={{ backgroundColor: theme, color: textColor, display: loading ? 'none' : 'flex' }}
-        className={cn('rounded-full relative cursor-pointer shadow-xl w-[58px] h-[58px] items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 border border-neutral-200/90', botOpened && 'hidden')}
+        className={cn(
+          'rounded-full relative cursor-pointer shadow-xl w-[58px] h-[58px] items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 border border-neutral-200/90',
+          position === 'BOTTOM_LEFT' ? 'left-0 ml-4' : 'right-0 mr-4',
+          botOpened && 'hidden'
+        )}
         onClick={onOpenChatBot}
       >
         {clientIcon ? (
