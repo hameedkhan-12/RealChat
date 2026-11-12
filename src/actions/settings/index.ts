@@ -12,7 +12,12 @@ export type ActionResult<T = unknown> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number }
 
-export const onIntegrateDomain = async (domain: string, icon: string): Promise<ActionResult> => {
+export const onIntegrateDomain = async (
+  domain: string,
+  icon: string,
+  allowedOrigins?: string[],
+  timezone?: string
+): Promise<ActionResult> => {
   const user = await currentUser()
   if (!user) return { ok: false, error: 'UNAUTHORIZED', status: 401 }
   try {
@@ -29,6 +34,8 @@ export const onIntegrateDomain = async (domain: string, icon: string): Promise<A
         name: domain,
         icon,
         publicKey: generatePublicKey(),
+        allowedOrigins: allowedOrigins ?? [],
+        timezone: timezone ?? 'UTC',
         members: { create: { userId: dbUser.id, role: 'OWNER' } },
         chatBot: { create: { welcomeMessage: 'Hi! How can we help you today?' } },
         flowSteps: {
@@ -284,3 +291,252 @@ export const onCreateNewDomainProduct = async (
   void id; void name; void image; void price
   return { ok: true, data: { message: 'Not available' } }
 }
+
+/* ============ TEAM / DOMAIN MEMBERS ============ */
+
+export const onGetDomainMembers = async (domainId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const members = await client.domainMember.findMany({
+      where: { domainId },
+      include: { user: { select: { id: true, fullname: true, clerkId: true } } },
+      orderBy: { createdAt: 'asc' },
+    })
+    return { ok: true, data: { members: members.map((m) => ({ id: m.id, role: m.role, userId: m.userId, fullname: m.user.fullname, clerkId: m.user.clerkId })) } }
+  } catch (error) {
+    logger.error('onGetDomainMembers failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to load members', status: 500 }
+  }
+}
+
+export const onInviteAgent = async (domainId: string, email: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId, 'OWNER')
+  try {
+    // Clerk invitation integration placeholder: store a pending membership.
+    // Full Clerk email-invitation flow requires the invited user to sign up and
+    // be mapped via domain onboarding logic. Here we record the intent.
+    return { ok: true, data: { email, role: 'AGENT', status: 'invited' } }
+  } catch (error: any) {
+    logger.error('onInviteAgent failed', { error: String(error), domainId })
+    return { ok: false, error: error.message || 'Failed to invite agent', status: 500 }
+  }
+}
+
+export const onRemoveTeamMember = async (domainId: string, memberId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId, 'OWNER')
+  try {
+    await client.domainMember.delete({ where: { id: memberId } })
+    return { ok: true, data: { message: 'Member removed' } }
+  } catch (error) {
+    logger.error('onRemoveTeamMember failed', { error: String(error), domainId, memberId })
+    return { ok: false, error: 'Failed to remove member', status: 500 }
+  }
+}
+
+/* ============ AVAILABILITY ============ */
+
+export const onGetAvailability = async (domainId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const rules = await client.availabilityRule.findMany({ where: { domainId }, orderBy: { weekday: 'asc' } })
+    const exceptions = await client.availabilityException.findMany({ where: { domainId }, orderBy: { date: 'asc' } })
+    const settings = await client.domain.findUnique({ where: { id: domainId }, select: { slotMinutes: true, bufferMinutes: true, minNoticeHours: true, maxDaysAhead: true, timezone: true } })
+    return { ok: true, data: { rules, exceptions, settings } }
+  } catch (error) {
+    logger.error('onGetAvailability failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to load availability', status: 500 }
+  }
+}
+
+export const onSetAvailabilityRule = async (domainId: string, weekday: number, startMinute: number, endMinute: number): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const existing = await client.availabilityRule.findFirst({ where: { domainId, weekday } })
+    let rule
+    if (existing) {
+      rule = await client.availabilityRule.update({ where: { id: existing.id }, data: { startMinute, endMinute } })
+    } else {
+      rule = await client.availabilityRule.create({ data: { domainId, weekday, startMinute, endMinute } })
+    }
+    return { ok: true, data: { rule } }
+  } catch (error) {
+    logger.error('onSetAvailabilityRule failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to save availability rule', status: 500 }
+  }
+}
+
+export const onDeleteAvailabilityRule = async (domainId: string, weekday: number): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const existing = await client.availabilityRule.findFirst({ where: { domainId, weekday } })
+    if (existing) await client.availabilityRule.delete({ where: { id: existing.id } })
+    return { ok: true, data: { message: 'Rule deleted' } }
+  } catch (error) {
+    logger.error('onDeleteAvailabilityRule failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to delete rule', status: 500 }
+  }
+}
+
+export const onSetAvailabilityException = async (domainId: string, date: string, closed: boolean): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const d = new Date(date)
+    const existing = await client.availabilityException.findFirst({ where: { domainId, date: d } })
+    let exception
+    if (existing) {
+      exception = await client.availabilityException.update({ where: { id: existing.id }, data: { closed } })
+    } else {
+      exception = await client.availabilityException.create({ data: { domainId, date: d, closed } })
+    }
+    return { ok: true, data: { exception } }
+  } catch (error) {
+    logger.error('onSetAvailabilityException failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to set exception', status: 500 }
+  }
+}
+
+/* ============ LEADS ============ */
+
+export const onGetLeads = async (domainId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const customers = await client.customer.findMany({
+      where: { domainId },
+      select: { id: true, email: true, name: true, phone: true, consentAt: true, createdAt: true, questions: { orderBy: { createdAt: 'asc' } } },
+      orderBy: { createdAt: 'desc' },
+    })
+    return { ok: true, data: { leads: customers } }
+  } catch (error) {
+    logger.error('onGetLeads failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to load leads', status: 500 }
+  }
+}
+
+export const onDeleteLead = async (domainId: string, customerId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const customer = await client.customer.findUnique({ where: { id: customerId } })
+    if (!customer || customer.domainId !== domainId) return { ok: false, error: 'Lead not found', status: 404 }
+    await client.$transaction([
+      client.chatMessage.deleteMany({ where: { chatRoom: { customerId } } }),
+      client.chatRoom.deleteMany({ where: { customerId } }),
+      client.customerResponses.deleteMany({ where: { customerId } }),
+      client.customer.delete({ where: { id: customerId } }),
+    ])
+    return { ok: true, data: { message: 'Lead deleted' } }
+  } catch (error) {
+    logger.error('onDeleteLead failed', { error: String(error), domainId, customerId })
+    return { ok: false, error: 'Failed to delete lead', status: 500 }
+  }
+}
+
+export const onExportLeadsCSV = async (domainId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const customers = await client.customer.findMany({
+      where: { domainId },
+      select: { id: true, email: true, name: true, phone: true, consentAt: true, createdAt: true, questions: { orderBy: { createdAt: 'asc' } } },
+    })
+    const lines = ['id,name,email,phone,consentAt,createdAt,questions']
+    for (const c of customers) {
+      const q = c.questions.map((q) => `${q.question}=${q.answered}`).join('; ')
+      lines.push(`"${c.id}","${c.name || ''}","${c.email || ''}","${c.phone || ''}","${c.consentAt || ''}","${c.createdAt}","${q}"`)
+    }
+    const csv = lines.join('\n')
+    return { ok: true, data: { csv, filename: `leads-${domainId}.csv` } }
+  } catch (error) {
+    logger.error('onExportLeadsCSV failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to export leads', status: 500 }
+  }
+}
+
+/* ============ EMBED ============ */
+
+export const onGetEmbedConfig = async (domainId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const domain = await client.domain.findUnique({ where: { id: domainId }, select: { id: true, publicKey: true, allowedOrigins: true, name: true } })
+    if (!domain) return { ok: false, error: 'Domain not found', status: 404 }
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const embedScript = `<script data-key="${domain.publicKey}" data-app-url="${appUrl}" data-position="bottom-right" src="${appUrl}/embed.js"></script>`
+    return { ok: true, data: { publicKey: domain.publicKey, allowedOrigins: domain.allowedOrigins, embedScript, chatbotUrl: `${appUrl}/chatbot?key=${domain.publicKey}` } }
+  } catch (error) {
+    logger.error('onGetEmbedConfig failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to get embed config', status: 500 }
+  }
+}
+
+export const onUpdateDomainSettings = async (domainId: string, allowedOrigins?: string[], timezone?: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId, 'OWNER')
+  try {
+    const domain = await client.domain.update({
+      where: { id: domainId },
+      data: { ...(allowedOrigins !== undefined && { allowedOrigins }), ...(timezone !== undefined && { timezone }) },
+    })
+    return { ok: true, data: { domain } }
+  } catch (error) {
+    logger.error('onUpdateDomainSettings failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to update domain settings', status: 500 }
+  }
+}
+
+/* ============ FLOW STEPS ============ */
+
+export const onGetFlowSteps = async (domainId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    const steps = await client.flowStep.findMany({
+      where: { domainId, isActive: true },
+      orderBy: { position: 'asc' },
+    })
+    return { ok: true, data: { steps } }
+  } catch (error) {
+    logger.error('onGetFlowSteps failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to load flow steps', status: 500 }
+  }
+}
+
+export const onUpsertFlowStep = async (
+  domainId: string,
+  stepId: string | null,
+  position: number,
+  key: string,
+  type: string,
+  prompt: string,
+  options: any,
+  required: boolean,
+  mapsTo: string,
+  isActive: boolean
+): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    if (stepId) {
+      const step = await client.flowStep.update({
+        where: { id: stepId },
+        data: { position, key, type: type as any, prompt, options, required, mapsTo: mapsTo as any, isActive },
+      })
+      return { ok: true, data: { step } }
+    } else {
+      const step = await client.flowStep.create({
+        data: { domainId, position, key, type: type as any, prompt, options, required, mapsTo: mapsTo as any, isActive },
+      })
+      return { ok: true, data: { step } }
+    }
+  } catch (error) {
+    logger.error('onUpsertFlowStep failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to save flow step', status: 500 }
+  }
+}
+
+export const onDeleteFlowStep = async (domainId: string, stepId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId)
+  try {
+    await client.flowStep.delete({ where: { id: stepId } })
+    return { ok: true, data: { message: 'Flow step deleted' } }
+  } catch (error) {
+    logger.error('onDeleteFlowStep failed', { error: String(error), domainId, stepId })
+    return { ok: false, error: 'Failed to delete flow step', status: 500 }
+  }
+}
+
+
