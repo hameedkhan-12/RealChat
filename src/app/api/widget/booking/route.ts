@@ -21,13 +21,8 @@ export const POST = handle(async (req: Request) => {
   const input = await readJson(req, BookingBody, 4096)
 
   const s = new Date(input.startsAt)
-  let e: Date
-  if (input.endsAt) {
-    e = new Date(input.endsAt)
-  } else {
-    e = new Date(s.getTime() + 30 * 60 * 1000)
-  }
-  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e <= s) throw new HttpError(400, 'INVALID_TIMES')
+  const e = new Date(s.getTime() + 30 * 60 * 1000)
+  if (isNaN(s.getTime()) || e <= s) throw new HttpError(400, 'INVALID_TIMES')
 
   const now = new Date()
   const MIN_NOTICE_MS = 15 * 60 * 1000

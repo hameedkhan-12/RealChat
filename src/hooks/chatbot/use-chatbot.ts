@@ -230,3 +230,7 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
     acceptConsent, sendMessage, getValues: null as any, errors: null as any,
   }
 }
+
+export const useRealTime = (_chatRoom: string, _setChats: React.Dispatch<React.SetStateAction<any[]>>) => {
+  // no-op stub for backward compatibility with dead real-time.tsx
+}

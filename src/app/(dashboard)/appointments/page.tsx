@@ -3,8 +3,8 @@ import InfoBar from '@/components/infobar'
 import React from 'react'
 
 const AppointmentsPage = async () => {
-  const result = await onGetAllBookingsForCurrentUser('')
-const bookings = result?.bookings || []
+  const result = await onGetAllBookingsForCurrentUser()
+  const bookings = result?.ok ? (result.data as any) : []
   return (
     <>
       <InfoBar />

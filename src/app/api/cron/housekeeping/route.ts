@@ -30,7 +30,7 @@ export const POST = handle(async (req: Request) => {
   for (const b of due24h) {
     try {
       await sendMail({
-        to: b.email,
+        to: b.email ?? '',
         subject: `Reminder: your appointment tomorrow at ${b.domain.name}`,
         text: `Hi ${b.name || ''},\n\nThis is a reminder that you have an appointment with ${b.domain.name} tomorrow at ${b.startsAt.toLocaleString()}.\n`,
       })
@@ -54,7 +54,7 @@ export const POST = handle(async (req: Request) => {
   for (const b of due1h) {
     try {
       await sendMail({
-        to: b.email,
+        to: b.email ?? '',
         subject: `Reminder: your appointment in 1 hour at ${b.domain.name}`,
         text: `Hi ${b.name || ''},\n\nThis is a reminder that you have an appointment with ${b.domain.name} in 1 hour at ${b.startsAt.toLocaleString()}.\n`,
       })

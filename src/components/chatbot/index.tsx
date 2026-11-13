@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useChatBot } from '@/hooks/chatbot/use-chatbot'
 import { getStrings } from '@/lib/i18n'
 import type { Lang } from '@/lib/i18n'
@@ -39,13 +39,11 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
   const consentRequired = !!brand?.consentText && !consentGiven
 
   const [expanded, setExpanded] = useState(false)
+  const inputRef = useRef<HTMLInputElement | null>(null)
   const launcherSideCls = position === 'BOTTOM_LEFT' ? 'left-4' : 'right-4'
   const launcherLabelCls = `absolute -top-6 ${position === 'BOTTOM_LEFT' ? 'left-0' : 'right-0'} whitespace-nowrap text-[11px] font-medium bg-black/80 text-white px-2 py-1 rounded`
-  const winPosStyle: React.CSSProperties = {
-    position: position === 'BOTTOM_LEFT' ? 'left' : 'right' as 'left' | 'right',
-    bottom: '4px',
-  } as React.CSSProperties
-  winPosStyle[position === 'BOTTOM_LEFT' ? 'left' : 'right'] = '4px'
+  const side = position === 'BOTTOM_LEFT' ? 'left' : 'right'
+  const winPosStyle: React.CSSProperties = { position: 'fixed', bottom: '4px', [side]: '4px' }
 
   if (consentRequired) {
     return (
@@ -173,7 +171,7 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
                     {m.role === 'assistant' && m.widget === 'chat-ended' && (
                       <div className="mt-3 flex gap-2">
                         {bookingEnabled && (
-                          <button type="button" onClick={onBookSlot} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">{strings.bookACall || 'Book a call'}</button>
+                          <button type="button" onClick={() => onBookSlot('', '')} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">{strings.bookACall || 'Book a call'}</button>
                         )}
                         {handoffEnabled && (
                           <button type="button" onClick={requestHandoff} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">{strings.talkToAPerson || 'Talk to a person'}</button>
@@ -194,10 +192,10 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
               )}
             </div>
 
-            <form onSubmit={handleSendMessage} className="px-4 py-3 border-t border-neutral-200/80 shrink-0 bg-white">
+            <form onSubmit={(e) => { e.preventDefault(); handleSendMessage({ content: inputRef.current?.value ?? '' }) }} className="px-4 py-3 border-t border-neutral-200/80 shrink-0 bg-white">
               <div className="flex items-center gap-2 bg-neutral-50 rounded-full px-3 py-1.5 border border-neutral-200/60">
                 <Label htmlFor="widget-input" className="sr-only">{strings.send || 'Send message'}</Label>
-                <Input id="widget-input" placeholder={strings.placeholder || "Type your message…"} className="flex-1 bg-transparent text-[13px] text-neutral-900 placeholder:text-neutral-400 outline-none" disabled={!sessionToken} />
+                <Input ref={inputRef} id="widget-input" placeholder={strings.placeholder || "Type your message…"} className="flex-1 bg-transparent text-[13px] text-neutral-900 placeholder:text-neutral-400 outline-none" disabled={!sessionToken} />
                 <Button type="submit" size="sm" className="h-7 w-7 p-0 rounded-full flex items-center justify-center" style={{ backgroundColor: primary, color: '#ffffff' }} disabled={!sessionToken || onAiTyping}>
                   <Send className="w-3.5 h-3.5" />
                 </Button>

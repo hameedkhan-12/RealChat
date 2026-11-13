@@ -30,7 +30,7 @@ export const POST = handle(async (req: Request): Promise<Response> => {
           data: { consentAt: new Date() },
         })
       }
-      return await handleStepOrComplete(room, advanceFlow(room.domainId, room.currentStepKey, undefined))
+      return await handleStepOrComplete(room, await advanceFlow(room.domainId, room.currentStepKey, undefined))
     }
 
     case 'finish': {

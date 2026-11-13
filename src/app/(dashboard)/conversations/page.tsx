@@ -2,6 +2,7 @@ import { onGetAllAccountDomains } from '@/actions/settings'
 import { onGetDomainChatRooms, onGetCustomerAnswers, onCloseConversation, onReturnToBot } from '@/actions/conversation'
 import InfoBar from '@/components/infobar'
 import { Separator } from '@/components/ui/separator'
+import { DomainSelector } from './domain-selector'
 
 type ChatRoomItem = {
   id: string
@@ -75,19 +76,7 @@ export default async function ConversationsPage({
         <div className="px-4 py-3 border-b flex items-center gap-4 bg-muted/50">
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium text-muted-foreground">Domain:</span>
-            <select
-              defaultValue={domainId}
-              onChange={(e) => {
-                const id = (e.target as HTMLSelectElement).value
-                window.location.href = id ? `?domain=${id}` : '?'
-              }}
-              className="border rounded px-2 py-1.5 text-sm"
-            >
-              <option value="">All domains</option>
-              {domains.map((d: any) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
+            <DomainSelector domains={domains} defaultValue={domainId} />
           </div>
           <div className="flex items-center gap-2 flex-1">
             <span className="text-xs font-medium text-muted-foreground">Status filter:</span>

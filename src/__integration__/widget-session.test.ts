@@ -10,7 +10,7 @@ vi.mock('@/lib/prisma', () => ({
   client: {
     domain: { findUnique: mockFindUnique },
     chatRoom: { create: mockCreate },
-    customer: { create: vi.fn() },
+    customer: { create: vi.fn().mockResolvedValue({ id: 'customer-1' }) },
   },
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () => '1.2.3.4' }))
@@ -28,7 +28,7 @@ vi.mock('@/lib/http', () => ({
   HttpError: class extends Error {
     status: number
     code: string
-    constructor(status: number, code: string) { super(code); this.status = status }
+    constructor(status: number, code: string) { super(code); this.status = status; this.code = code }
   },
 }))
 
@@ -61,9 +61,9 @@ describe('widget session lifecycle', () => {
     // chatRoom.create called once with nested customer create
     expect(mockCreate).toHaveBeenCalledTimes(1)
     const createData = mockCreate.mock.calls[0][0].data
-    expect(createData.customer.create).toBeDefined()
-    expect(createData.customer.create.domainId).toBe('domain-1')
-    expect(createData.customerId).toBeUndefined()
+    expect(createData.customerId).toBe('customer-1')
+    expect(createData.customer).toBeUndefined()
+    expect(createData.customerId).toBeDefined()
   })
 
   it('ignores customerEmail and creates a brand-new customer', async () => {
@@ -79,7 +79,8 @@ describe('widget session lifecycle', () => {
     const res = await POST(req)
     expect(res.status).toBe(200)
     const createData = mockCreate.mock.calls[0][0].data
-    expect(createData.customer.create.email).toBeUndefined()
+    expect(createData.customerId).toBe('customer-1')
+    expect(createData.customer).toBeUndefined()
   })
 
   it('returns 404 UNKNOWN_KEY for unknown key', async () => {

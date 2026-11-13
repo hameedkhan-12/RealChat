@@ -2,7 +2,7 @@
 
 import { client } from '@/lib/prisma'
 import { currentUser } from '@clerk/nextjs/server'
-import { requireDomainAccess, requireResourceAccess } from '@/lib/auth'
+import { requireDomainAccess, requireResourceAccess, requireUser } from '@/lib/auth'
 import { action } from '@/lib/action'
 import { logger } from '@/lib/logger'
 

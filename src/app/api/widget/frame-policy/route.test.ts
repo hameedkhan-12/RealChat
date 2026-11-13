@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { GET } from './route'
 import { client } from '@/lib/prisma'
 
@@ -12,7 +12,7 @@ describe('frame-policy route', () => {
   })
 
   it('returns allowedOrigins for a valid key', async () => {
-    vi.mocked(client.domain.findUnique).mockResolvedValue({ allowedOrigins: ['https://example.com', 'https://shop.example.com'] })
+    vi.mocked(client.domain.findUnique).mockResolvedValue({ allowedOrigins: ['https://example.com', 'https://shop.example.com'] } as any)
     const res = await GET(makeRequest('http://localhost/api/widget/frame-policy?key=abcdef1234567890abcdef1234567890abcdef12'))
     const json = await res.json()
     expect(res.status).toBe(200)

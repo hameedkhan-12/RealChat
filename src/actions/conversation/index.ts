@@ -2,6 +2,7 @@
 
 import { client } from '@/lib/prisma'
 import { requireResourceAccess } from '@/lib/auth'
+import { action } from '@/lib/action'
 import { logger } from '@/lib/logger'
 
 export type ActionResult<T = unknown> =

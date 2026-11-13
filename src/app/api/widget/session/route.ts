@@ -23,14 +23,18 @@ export const POST = handle(async (req: Request) => {
   if (!(await verifyTurnstile(input.turnstileToken, ip))) throw new HttpError(403, 'BOT_CHECK_FAILED')
 
   const { token, hash } = createSessionToken()
+  const customer = await client.customer.create({
+    data: { domainId: domain.id },
+    select: { id: true },
+  })
   const room = await client.chatRoom.create({
     data: {
       domainId: domain.id,
+      customerId: customer.id,
       sessionTokenHash: hash,
       pageUrl: input.pageUrl ?? null,
       utm: input.utm ?? undefined,
       locale: input.locale ?? null,
-      customer: { create: { domainId: domain.id } },
     },
     select: { id: true },
   })
