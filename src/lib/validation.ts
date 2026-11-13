@@ -1,4 +1,4 @@
-﻿import { z } from 'zod'
+import { z } from 'zod'
 
 export const messageSchema = z.object({
   sessionToken: z.string().min(10).max(256).optional(),

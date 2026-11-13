@@ -26,7 +26,7 @@ const BotLivePreview = ({
   const displayTitle =
     botName || (domainName ? `${domainName.split('.')[0]} Assistant` : 'Sales Assistant')
   const displayBranding =
-    branding || (domainName ? `Powered by ${domainName.split('.')[0]}` : 'Powered by Corinna AI')
+    branding || (domainName ? `Powered by ${domainName.split('.')[0]}` : 'Powered by RealChat')
   const displayGreeting =
     welcomeMessage || 'Hey there! Have a question? Let me help you today.'
 

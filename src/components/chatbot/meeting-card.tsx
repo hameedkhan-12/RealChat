@@ -14,7 +14,7 @@ type MeetingBookedProps = {
 }
 
 export const MeetingBookedCard = ({
-  brandName = 'J7 Group',
+  brandName = 'RealChat',
   botIcon,    
   dateStr,
   slot,

@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   try {
     var script = document.currentScript;
     if (!script) return;

@@ -1,4 +1,4 @@
-﻿import crypto from 'crypto'
+import crypto from 'crypto'
 import { client } from '@/lib/prisma'
 import { hashToken, getBearerToken, safeEqual } from '@/lib/session'
 

@@ -1,4 +1,4 @@
-﻿'use server'
+'use server'
 
 import { currentUser } from '@clerk/nextjs/server'
 import { client } from '@/lib/prisma'

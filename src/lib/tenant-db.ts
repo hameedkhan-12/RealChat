@@ -1,4 +1,4 @@
-﻿import 'server-only'
+import 'server-only'
 import { client } from '@/lib/prisma'
 
 export function tenantDb(domainId: string) {

@@ -20,7 +20,7 @@ export function generateICS({
   const startStr = formatICSTime(startsAt)
   const endStr = formatICSTime(endsAt)
   const nowStr = formatICSTime(new Date())
-  const uid = `booking-${bookingId}@corinna-ai`
+  const uid = `booking-${bookingId}@realchat`
   const summary = `Appointment with ${domainName}`
   const description = customerName
     ? `Appointment with ${customerName} (${customerEmail || 'no email'})`
@@ -29,7 +29,7 @@ export function generateICS({
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Corinna AI//Booking System//EN',
+    'PRODID:-//RealChat//Booking System//EN',
     'METHOD:REQUEST',
     'BEGIN:VEVENT',
     `UID:${uid}`,

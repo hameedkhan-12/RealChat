@@ -1,4 +1,4 @@
-﻿import 'server-only'
+import 'server-only'
 import Pusher from 'pusher'
 
 let _pusher: Pusher | null = null

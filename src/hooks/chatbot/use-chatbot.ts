@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { ChatBotMessageSchema, ChatMessageType } from '@/schemas/conversation.schema'
 import { zodResolver } from '@hookform/resolvers/zod'

@@ -1,4 +1,4 @@
-﻿import crypto from 'crypto'
+import crypto from 'crypto'
 
 export function createSessionToken() {
   const token = crypto.randomBytes(32).toString('hex')

@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 import { ChatBotMessageProps, ChatMessageType } from '@/schemas/conversation.schema'
 import React, { forwardRef, useState, useEffect } from 'react'
 import { UseFormRegister } from 'react-hook-form'

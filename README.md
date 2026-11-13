@@ -1,4 +1,4 @@
-# Corinna AI - Real Estate Chat Widget
+# RealChat - Real Estate Chat Widget
 
 Embeddable AI chatbot widget for real estate websites. Built with Next.js 16, TypeScript, Prisma + PostgreSQL, Clerk auth, Pusher, and Tailwind/shadcn/ui.
 
@@ -39,8 +39,8 @@ Embeddable AI chatbot widget for real estate websites. Built with Next.js 16, Ty
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/corinna-ai.git
-cd corinna-ai
+git clone https://github.com/your-org/realchat.git
+cd realchat
 
 # Install dependencies
 npm install

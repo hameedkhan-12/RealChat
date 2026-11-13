@@ -60,7 +60,7 @@ const CodeSnippet = ({ id }: Props) => {
         const data = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
         if (!data) return;
         // Chatbot is ready — send the domain ID (once)
-        if (data.type === "CORINNA_READY") {
+        if (data.type === "REALCHAT_READY") {
           sendId();
           idSent = true;
         }

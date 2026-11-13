@@ -1,4 +1,4 @@
-﻿type Level = 'info' | 'warn' | 'error'
+type Level = 'info' | 'warn' | 'error'
 
 function redact(value: unknown): unknown {
   if (typeof value === 'string') {
