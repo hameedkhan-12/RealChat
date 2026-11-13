@@ -6,12 +6,10 @@ Embeddable AI chatbot widget for real estate websites. Built with Next.js 16, Ty
 
 - **Multi-tenant architecture**: Each tenant = one domain with isolated data
 - **Embeddable chat widget**: JavaScript embed script (`/embed.js`) for any website
-- **AI conversation flow**: Server-side state machine with branching logic
-- **Human handoff**: Bot → Waiting Agent → Live → Closed status machine
+- **Rule-based conversation flow**: Server-side state machine with branching logic (no AI/LLM)- **Human handoff**: Bot → Waiting Agent → Live → Closed status machine
 - **Appointment booking**: Timezone-aware slot generation with transactional booking
 - **Lead management**: Capture visitor leads with email/phone/name
 - **Brand customization**: Logo, colors, welcome message, position
-- **Newsletter signup**: Email capture
 - **Dashboard**: Conversations, appointments, leads, settings
 
 ## Tech Stack
@@ -22,7 +20,7 @@ Embeddable AI chatbot widget for real estate websites. Built with Next.js 16, Ty
 - **Auth**: Clerk
 - **Realtime**: Pusher
 - **Styling**: Tailwind CSS + shadcn/ui
-- **Testing**: Vitest + Playwright (coming)
+- **Testing**: Vitest
 - **Email**: Nodemailer (SMTP)
 
 ## Quick Start
@@ -153,3 +151,15 @@ public/
 ## License
 
 MIT
+
+## Release Checklist
+
+- [ ] `npm ci` succeeds
+- [ ] `npm run typecheck`, `npm run lint`, `npm test`, `npm run build` pass
+- [ ] `npx prisma validate` succeeds
+- [ ] Production env vars set (PUSHER, UPSTASH, TURNSTILE, SMTP, CRON_SECRET)
+- [ ] `.env` not committed; `.env.example` up to date
+- [ ] Tenant `allowedOrigins` configured for each embed domain
+- [ ] Turnstile secret + site key configured (or widget accepts visitors without bot check in non-production)
+- [ ] SMTP configured (Resend SMTP recommended) and `SMTP_FROM` domain verified
+- [ ] CRON_SECRET set and `/api/cron/housekeeping` wired to a cron trigger
