@@ -1,64 +1,95 @@
 'use client'
 
-import { ChatBotMessageSchema, ChatMessageType } from '@/schemas/conversation.schema'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect, useRef, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import type { ChatMessageType } from '@/schemas/conversation.schema'
 
-type CurrentBot = {
-  id?: string
-  name: string
-  chatBot: {
-    id: string
-    avatarUrl?: string | null
-    icon?: string | null
-    welcomeMessage: string | null
-    primaryColor?: string | null
-    background?: string | null
-    textColor: string | null
-    helpdesk?: boolean
-    bookingEnabled?: boolean
-    handoffEnabled?: boolean
-  } | null
-  helpdesk: { id: string; question: string; answer: string; domainId?: string | null }[]
+type Brand = {
+  botName?: string | null
+  welcomeMessage?: string | null
+  avatarUrl?: string | null
+  primaryColor?: string | null
+  textColor?: string | null
+  position?: string | null
+  launcherLabel?: string | null
+  fontFamily?: string | null
+  borderRadius?: string | null
+  privacyPolicyUrl?: string | null
+  consentText?: string | null
+  offlineMessage?: string | null
+  showPoweredBy?: boolean | null
 }
 
 type WidgetConfig = {
-  chatBot: CurrentBot['chatBot']
   domainName: string
   timezone: string
   defaultLocale: string
+  brand: Brand
+  features: { booking: boolean; handoff: boolean }
 }
 
-export const useChatBot = (publicKey?: string) => {
-  const { register, handleSubmit, reset, formState: { errors }, getValues } = useForm({
-    resolver: zodResolver(ChatBotMessageSchema) as any,
-  })
+type UseChatBotReturn = {
+  botOpened: boolean
+  onOpenChatBot: () => void
+  handleSendMessage: (values: { content?: string }) => void
+  onSelectOption: (option: string) => void
+  onBookSlot: (dateStr: string, slotTime: string) => void
+  onRestartChat: () => void
+  onChats: ChatMessageType[]
+  register: any
+  onAiTyping: boolean
+  messageWindowRef: React.RefObject<HTMLDivElement | null>
+  currentBot: any
+  loading: boolean
+  config: WidgetConfig | undefined
+  sessionToken: string | undefined
+  chatRoomId: string | undefined
+  consentGiven: boolean
+  setConsentGiven: (v: boolean) => void
+  requestHandoff: () => void
+  status: 'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'
+  acceptConsent: () => Promise<void>
+  sendMessage: (text: string, answer?: string | null) => Promise<void>
+  errors: any
+  getValues: any
+}
 
-  const [currentBot, setCurrentBot] = useState<CurrentBot | undefined>()
+export const useChatBot = (publicKey?: string): UseChatBotReturn => {
+  const [currentBot, setCurrentBot] = useState<any>()
   const [config, setConfig] = useState<WidgetConfig | undefined>()
   const [sessionToken, setSessionToken] = useState<string | undefined>()
   const [chatRoomId, setChatRoomId] = useState<string | undefined>()
   const messageWindowRef = useRef<HTMLDivElement | null>(null)
   const [botOpened, setBotOpened] = useState(false)
-  const onOpenChatBot = () => setBotOpened((prev) => !prev)
   const [loading, setLoading] = useState(true)
   const [onChats, setOnChats] = useState<ChatMessageType[]>([])
   const [onAiTyping, setOnAiTyping] = useState(false)
-  const [onRealTime, setOnRealTime] = useState<{ chatroom: string; mode: boolean } | undefined>()
+  const [consentGiven, setConsentGiven] = useState(false)
+  const [status, setStatus] = useState<'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'>('BOT')
 
-  const onScrollToBottom = () => {
+  const onScrollToBottom = useCallback(() => {
     messageWindowRef.current?.scroll({ top: messageWindowRef.current.scrollHeight, left: 0, behavior: 'smooth' })
-  }
+  }, [])
 
   useEffect(() => { onScrollToBottom() }, [onChats])
 
-  const buildInitialMessages = (bot: CurrentBot | undefined): ChatMessageType[] => {
-    const welcome = bot?.chatBot?.welcomeMessage || 'Hi! How can we help you today?'
+  // Resize: tell the host page our desired state
+  const notifyResize = useCallback(() => {
+    if (typeof window === 'undefined' || !window.parent || window.parent === window) return
+    const position = (config?.brand.position ?? 'BOTTOM_RIGHT') === 'BOTTOM_LEFT' ? 'BOTTOM_LEFT' : 'BOTTOM_RIGHT'
+    window.parent.postMessage(
+      { type: 'widget:state', open: botOpened, position, hasLabel: true },
+      '*'
+    )
+  }, [botOpened, config])
+
+  useEffect(() => { notifyResize() }, [notifyResize])
+
+  const buildInitialMessages = (bot: any): ChatMessageType[] => {
+    const welcome = bot?.welcomeMessage || config?.brand.welcomeMessage || 'Hi! How can we help you today?'
     return [{ role: 'assistant', content: welcome }]
   }
 
-  const initSession = async (pk: string) => {
+  const initSession = useCallback(async (pk: string) => {
     try {
       const res = await fetch('/api/widget/session', {
         method: 'POST',
@@ -70,7 +101,6 @@ export const useChatBot = (publicKey?: string) => {
       if (data.ok) {
         setSessionToken(data.sessionToken)
         setChatRoomId(data.chatRoomId)
-        // fetch config
         const cfgRes = await fetch('/api/widget/config', {
           headers: { Authorization: `Bearer ${data.sessionToken}` },
         })
@@ -78,8 +108,9 @@ export const useChatBot = (publicKey?: string) => {
           const cfg = await cfgRes.json()
           if (cfg.ok) {
             setConfig(cfg.config as WidgetConfig)
-            setCurrentBot(cfg.config.chatBot as CurrentBot)
-            setOnChats(buildInitialMessages(cfg.config.chatBot as CurrentBot))
+            setCurrentBot(cfg.config.chatBot)
+            setOnChats(buildInitialMessages(cfg.config.chatBot))
+            setStatus('BOT')
           }
         }
         setLoading(false)
@@ -87,16 +118,15 @@ export const useChatBot = (publicKey?: string) => {
     } catch {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     if (publicKey) initSession(publicKey)
-  }, [publicKey])
+  }, [publicKey, initSession])
 
   // Listen for postMessage from parent (embed.js) passing the public key
   useEffect(() => {
     const handleParentMessage = (e: MessageEvent) => {
-      // verify origin in production
       let botid = e.data
       if (typeof botid === 'object' && botid !== null) {
         botid = botid.id || botid.botId || botid.domainId || botid.key || botid.publicKey
@@ -107,9 +137,9 @@ export const useChatBot = (publicKey?: string) => {
     }
     window.addEventListener('message', handleParentMessage)
     return () => window.removeEventListener('message', handleParentMessage)
-  }, [sessionToken, publicKey])
+  }, [sessionToken, publicKey, initSession])
 
-  const sendMessage = async (text: string, stepKey?: string, answer?: string) => {
+  const sendMessage = useCallback(async (text: string, answer?: string | null) => {
     if (!sessionToken) return
     const userMsg: ChatMessageType = { role: 'user', content: text }
     const updatedChats = [...onChats, userMsg]
@@ -118,11 +148,8 @@ export const useChatBot = (publicKey?: string) => {
     try {
       const res = await fetch('/api/widget/message', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ content: text, stepKey, answer }),
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'answer', answer }),
       })
       setOnAiTyping(false)
       if (!res.ok) return
@@ -134,38 +161,72 @@ export const useChatBot = (publicKey?: string) => {
         setOnChats((prev) => [...prev, botMsg])
       }
       if (data.kind === 'complete') {
+        setStatus('CLOSED')
         const actionsMsg: ChatMessageType = {
           role: 'assistant',
           content: 'Thank you! How would you like to proceed?',
           widget: 'chat-ended',
-          widgetData: data.actions ? { actions: data.actions } : {},
+          widgetData: { actions: data.actions ?? [] },
         }
         setOnChats((prev) => [...prev, actionsMsg])
       }
     } catch {
       setOnAiTyping(false)
     }
-  }
+  }, [sessionToken, onChats])
 
   const handleSendMessage = async (values: { content?: string }) => {
-    reset()
+    // form reset handled by caller
     if (values.content) await sendMessage(values.content)
   }
 
   const onSelectOption = async (option: string) => { await sendMessage(option) }
-  const onBookSlot = async (_dateStr: string, _slotTime: string) => { /* Phase 5 */ }
+  const onBookSlot = async (_dateStr: string, _slotTime: string) => { /* booking handled by manage page */ }
   const onRestartChat = () => { if (currentBot) setOnChats(buildInitialMessages(currentBot)) }
 
-  return {
-    botOpened, onOpenChatBot, handleSendMessage, onSelectOption, onBookSlot, onRestartChat,
-    onChats, register, onAiTyping, messageWindowRef, currentBot, loading, setOnChats, onRealTime, errors,
-    config, sessionToken, chatRoomId, sendMessage, getValues,
+  const acceptConsent = async () => {
+    if (!sessionToken) return
+    try {
+      const res = await fetch('/api/widget/message', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'consent' }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (!data.ok) return
+      setConsentGiven(true)
+      setStatus('BOT')
+      if (data.kind === 'step' && data.step) {
+        setOnChats([{ role: 'assistant', content: data.step.prompt }])
+      } else {
+        setStatus('CLOSED')
+      }
+    } catch {}
   }
-}
 
-export const useRealTime = (
-  chatRoom: string,
-  setChats: React.Dispatch<React.SetStateAction<ChatMessageType[]>>
-) => {
-  useEffect(() => { void chatRoom; void setChats }, [chatRoom, setChats])
+  const requestHandoff = async () => {
+    if (!sessionToken) return
+    try {
+      const res = await fetch('/api/widget/handoff', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'visitor requested' }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.ok) {
+        setStatus('WAITING_AGENT')
+        setOnChats((prev) => [...prev, { role: 'assistant', content: 'A person will be with you shortly.' }])
+      }
+    } catch {}
+  }
+
+  return {
+    botOpened, onOpenChatBot: () => setBotOpened((p) => !p), handleSendMessage,
+    onSelectOption, onBookSlot, onRestartChat, onChats, register: null as any, onAiTyping,
+    messageWindowRef, currentBot, loading, config, sessionToken, chatRoomId,
+    consentGiven, setConsentGiven, requestHandoff, status,
+    acceptConsent, sendMessage, getValues: null as any, errors: null as any,
+  }
 }
