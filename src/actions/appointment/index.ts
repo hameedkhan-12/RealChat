@@ -129,8 +129,10 @@ export const saveAnswers = async (questions: Record<string, string>, customerId:
     if (customer) {
       await requireDomainAccess(customer.domainId)
     }
-    for (const [question, answered] of Object.entries(questions || {})) {
-      await client.customerResponses.create({ data: { customerId, question, answered } })
+    for (const [stepKey, answered] of Object.entries(questions || {})) {
+      await client.customerResponses.create({
+        data: { customerId, stepKey, question: stepKey, answered },
+      })
     }
     return { ok: true, data: { messege: 'Updated Responses' } }
   } catch (error) {

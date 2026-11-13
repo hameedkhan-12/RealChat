@@ -93,6 +93,11 @@ describe('checkSlotConflict', () => {
       email: 'test@test.com',
       name: 'Test Customer',
       notes: null,
+      phone: null,
+      visitorTimezone: null,
+      cancelledAt: null,
+      reminder24hSentAt: null,
+      reminder1hSentAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     })

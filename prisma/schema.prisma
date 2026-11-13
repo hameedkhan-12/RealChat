@@ -99,6 +99,7 @@ model Domain {
   bookings           Booking[]
   availabilityRules  AvailabilityRule[]
   availabilityExceptions AvailabilityException[]
+  invites            DomainInvite[]
   helpdesk           HelpDesk[]
   filterQuestions    FilterQuestions[]
 
@@ -180,45 +181,52 @@ model Customer {
 
   @@index([domainId])
   @@index([domainId, email])
+  @@index([domainId, createdAt])
 }
 
 model CustomerResponses {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   customerId String   @db.Uuid
-  stepKey    String?
+  stepKey    String                                   // REQUIRED
   question   String
   answered   String?
   createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt                       // NEW
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
+  @@unique([customerId, stepKey])                      // NEW
   @@index([customerId])
 }
 
 model ChatRoom {
   id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   domainId         String         @db.Uuid
-  customerId       String?        @db.Uuid
-  status           ChatRoomStatus @default(BOT)
-  currentStepKey   String?
-  sessionTokenHash String?
-  assignedToUserId String?        @db.Uuid
-  consentAt        DateTime?
-  pageUrl          String?
-  utm              Json?
-  lastActivityAt   DateTime       @default(now())
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  customerId         String         @db.Uuid                       // now REQUIRED
+  status             ChatRoomStatus @default(BOT)
+  currentStepKey     String?
+  sessionTokenHash   String?        @unique                        // now UNIQUE
+  assignedToUserId   String?        @db.Uuid
+  consentAt          DateTime?
+  locale             String?
+  pageUrl            String?
+  utm                Json?
+  flowCompletedAt    DateTime?                                      // NEW
+  leadNotifiedAt     DateTime?                                      // NEW (send the lead email once)
+  handoffRequestedAt DateTime?                                      // NEW
+  waitingEscalatedAt DateTime?                                      // NEW
+  lastActivityAt     DateTime       @default(now())
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   domain     Domain        @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)  // Cascade now
   assignedTo User?         @relation("AssignedAgent", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   messages   ChatMessage[]
 
   @@index([domainId])
   @@index([customerId])
-  @@index([sessionTokenHash])
   @@index([domainId, status])
+  @@index([status, lastActivityAt])
 }
 
 model ChatMessage {
@@ -248,7 +256,12 @@ model Booking {
   manageTokenHash  String?
   email            String?
   name             String?
+  phone            String?                                  // NEW
   notes            String?
+  visitorTimezone  String?                                  // NEW (IANA name, for emails)
+  cancelledAt      DateTime?                                // NEW
+  reminder24hSentAt DateTime?                                // NEW
+  reminder1hSentAt  DateTime?                                // NEW
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
@@ -256,8 +269,8 @@ model Booking {
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   assignedTo User?     @relation("AssignedBookingAgent", fields: [assignedToUserId], references: [id], onDelete: SetNull)
 
-  @@unique([domainId, startsAt])
   @@index([domainId, startsAt])
+  @@index([status, startsAt])
   @@index([customerId])
 }
 
@@ -270,7 +283,7 @@ model AvailabilityRule {
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
 
-  @@index([domainId, weekday])
+  @@unique([domainId, weekday])
 }
 
 model AvailabilityException {
@@ -281,7 +294,7 @@ model AvailabilityException {
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
 
-  @@index([domainId, date])
+  @@unique([domainId, date])
 }
 
 model HelpDesk {
@@ -304,4 +317,19 @@ model FilterQuestions {
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
 
   @@index([domainId])
+}
+
+model DomainInvite {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domainId   String           @db.Uuid
+  email      String
+  role       DomainMemberRole @default(AGENT)
+  tokenHash  String           @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime         @default(now())
+  domain     Domain           @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId])
+  @@index([email])
 }
