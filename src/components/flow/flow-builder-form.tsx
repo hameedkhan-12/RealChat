@@ -19,6 +19,8 @@ const MAPS_TO_LABELS: Record<string, string> = {
   PHONE: 'Phone',
 }
 
+type Option = { label: string; value: string }
+
 type Props = {
   domainId: string
 }
@@ -28,9 +30,23 @@ export function FlowBuilderForm({ domainId }: Props) {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState<{
-    key: string; type: string; prompt: string; options: string; position: number; required: boolean; mapsTo: string; isActive: boolean
+    key: string
+    type: string
+    prompt: string
+    options: Option[]
+    position: number
+    required: boolean
+    mapsTo: string
+    isActive: boolean
   }>({
-    key: '', type: 'CHOICE', prompt: '', options: '', position: 1, required: true, mapsTo: 'NONE', isActive: true
+    key: '',
+    type: 'CHOICE',
+    prompt: '',
+    options: [],
+    position: 1,
+    required: true,
+    mapsTo: 'NONE',
+    isActive: true,
   })
 
   useEffect(() => {
@@ -46,30 +62,81 @@ export function FlowBuilderForm({ domainId }: Props) {
       .finally(() => setLoading(false))
   }, [domainId])
 
-  const onAdd = () => setForm({ key: '', type: 'CHOICE', prompt: '', options: '', position: 1, required: true, mapsTo: 'NONE', isActive: true })
+  const onAdd = () =>
+    setForm({
+      key: '',
+      type: 'CHOICE',
+      prompt: '',
+      options: [],
+      position: 1,
+      required: true,
+      mapsTo: 'NONE',
+      isActive: true,
+    })
 
   const onEdit = (step: any) => {
+    const options: Option[] = Array.isArray(step.options)
+      ? (step.options as any[]).map((o: any) => ({ label: o.label ?? '', value: o.value ?? '' }))
+      : []
     setForm({
-      key: step.key, type: step.type, prompt: step.prompt,
-      options: Array.isArray(step.options) ? JSON.stringify(step.options, null, 2) : '',
-      position: step.position, required: step.required, mapsTo: step.mapsTo, isActive: step.isActive
+      key: step.key,
+      type: step.type,
+      prompt: step.prompt,
+      options,
+      position: step.position,
+      required: step.required,
+      mapsTo: step.mapsTo,
+      isActive: step.isActive,
     })
     setEditing(step)
   }
 
+  const addOption = () => {
+    setForm({ ...form, options: [...form.options, { label: '', value: '' }] })
+  }
+
+  const removeOption = (index: number) => {
+    setForm({ ...form, options: form.options.filter((_, i) => i !== index) })
+  }
+
+  const updateOptionLabel = (index: number, value: string) => {
+    const next = [...form.options]
+    next[index].label = value
+    setForm({ ...form, options: next })
+  }
+
+  const updateOptionValue = (index: number, value: string) => {
+    const next = [...form.options]
+    next[index].value = value
+    setForm({ ...form, options: next })
+  }
+
   const onSave = async () => {
-    let options: any = null
-    if (form.options.trim()) {
-      try { options = JSON.parse(form.options) } catch { /* keep null */ }
-    }
+    const options = form.options.filter((o) => o.label.trim() || o.value.trim())
     const res = await onUpsertFlowStep(
-      domainId, editing?.id || null,
-      form.position, form.key, form.type, form.prompt,
-      options, form.required, form.mapsTo, form.isActive
+      domainId,
+      editing?.id || null,
+      form.position,
+      form.key,
+      form.type,
+      form.prompt,
+      options,
+      form.required,
+      form.mapsTo,
+      form.isActive
     )
     if (res?.ok) {
       setEditing(null)
-      setForm({ key: '', type: 'CHOICE', prompt: '', options: '', position: 1, required: true, mapsTo: 'NONE', isActive: true })
+      setForm({
+        key: '',
+        type: 'CHOICE',
+        prompt: '',
+        options: [],
+        position: 1,
+        required: true,
+        mapsTo: 'NONE',
+        isActive: true,
+      })
       onGetFlowSteps(domainId).then((r) => {
         if (r?.ok) setSteps((r.data as any).steps || [])
       })
@@ -80,9 +147,11 @@ export function FlowBuilderForm({ domainId }: Props) {
     if (!confirm('Delete this flow step?')) return
     const res = await onDeleteFlowStep(domainId, id)
     if (res?.ok) {
-      setSteps(prev => prev.filter(s => s.id !== id))
+      setSteps((prev) => prev.filter((s) => s.id !== id))
     }
   }
+
+  const showOptions = form.type === 'CHOICE' || form.type === 'MULTI_CHOICE'
 
   if (!domainId) {
     return (
@@ -112,7 +181,9 @@ export function FlowBuilderForm({ domainId }: Props) {
                   <div key={s.id} className="flex items-center justify-between p-3 rounded-lg border">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[10px] font-bold uppercase text-muted-foreground">#{s.position}</span>
+                        <span className="text-[10px] font-bold uppercase text-muted-foreground">
+                          #{s.position}
+                        </span>
                         <span className="text-xs font-medium">{TYPE_LABELS[s.type] || s.type}</span>
                         {s.mapsTo !== 'NONE' && (
                           <span className="text-[10px] text-blue-600 bg-blue-50/50 px-2 py-0.5 rounded">
@@ -175,16 +246,48 @@ export function FlowBuilderForm({ domainId }: Props) {
                   className="w-full px-2 py-1 rounded border text-sm"
                 />
               </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-muted-foreground">Options JSON</label>
-                <textarea
-                  value={form.options}
-                  onChange={(e) => setForm({ ...form, options: e.target.value })}
-                  rows={3}
-                  className="w-full px-2 py-1 rounded border font-mono text-xs"
-                  placeholder='[{"label":"Buy","value":"buy","nextStepKey":"property_type"}]'
-                />
+              {showOptions && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-muted-foreground">Options</label>
+                    <button
+                      type="button"
+                      onClick={addOption}
+                      className="px-2 py-1 text-xs rounded border hover:bg-muted"
+                    >
+                      Add option
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {form.options.map((opt, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input
+                          placeholder="Label"
+                          value={opt.label}
+                          onChange={(e) => updateOptionLabel(i, e.target.value)}
+                          className="flex-1 px-2 py-1 rounded border text-sm"
+                        />
+                        <input
+                          placeholder="Value"
+                          value={opt.value}
+                          onChange={(e) => updateOptionValue(i, e.target.value)}
+                          className="flex-1 px-2 py-1 rounded border text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeOption(i)}
+                          className="px-2 py-1 rounded border text-red-600 hover:bg-red-50"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                    {form.options.length === 0 && (
+                      <p className="text-[10px] text-muted-foreground">No options yet. Click “Add option”.</p>
+                    )}
+                  </div>
                 </div>
+              )}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-muted-foreground">Maps To</label>
                 <select
