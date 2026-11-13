@@ -1,4 +1,5 @@
 import React from 'react'
+import { BotIcon } from '@/icons/bot-icon'
 import CalIcon from '@/icons/cal-icon'
 import ChatIcon from '@/icons/chat-icon'
 import DashboardIcon from '@/icons/dashboard-icon'
@@ -12,6 +13,7 @@ type SIDE_BAR_MENU_PROPS = { label: string; icon: React.ReactNode; path: string 
 export const SIDE_BAR_MENU: SIDE_BAR_MENU_PROPS[] = [
   { label: 'Dashboard', icon: <DashboardIcon />, path: 'dashboard' },
   { label: 'Conversations', icon: <ChatIcon />, path: 'conversations' },
+  { label: 'Flow Builder', icon: <BotIcon />, path: 'flow' },
   { label: 'Settings', icon: <SettingsIcon />, path: 'settings' },
   { label: 'Appointments', icon: <CalIcon />, path: 'appointments' },
 ]
