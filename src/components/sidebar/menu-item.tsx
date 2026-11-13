@@ -7,11 +7,12 @@ type Props = {
   label: string
   icon: React.ReactNode
   path?: string
+  query?: string
   current?: string
   onSignOut?(): void
 }
 
-const MenuItem = ({ size, path, icon, label, current, onSignOut }: Props) => {
+const MenuItem = ({ size, path, icon, label, query, current, onSignOut }: Props) => {
   switch (size) {
     case 'max':
       return (
@@ -25,7 +26,7 @@ const MenuItem = ({ size, path, icon, label, current, onSignOut }: Props) => {
               ? 'bg-white dark:bg-neutral-800 font-bold text-black dark:text-white shadow-sm'
               : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'
           )}
-          href={path ? `/${path}` : '#'}
+          href={path ? `/${path}${query ?? ''}` : '#'}
         >
           {icon} {label}
         </Link>
@@ -42,7 +43,7 @@ const MenuItem = ({ size, path, icon, label, current, onSignOut }: Props) => {
               ? 'bg-white dark:bg-neutral-800 font-bold text-black dark:text-white shadow-sm'
               : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'
           )}
-          href={path ? `/${path}` : '#'}
+          href={path ? `/${path}${query ?? ''}` : '#'}
         >
           {icon}
         </Link>

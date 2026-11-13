@@ -4,6 +4,7 @@ import { LogOut, MonitorSmartphone } from 'lucide-react'
 import { MenuLogo } from '@/icons/menu-logo'
 import MenuItem from './menu-item'
 import DomainMenu from './domain-menu'
+import { useDomain } from '@/hooks/sidebar/use-domain'
 
 type MinMenuProps = {
   onShrink(): void
@@ -25,6 +26,9 @@ export const MinMenu = ({
   onSignOut,
   domains,
 }: MinMenuProps) => {
+  const { isDomain } = useDomain()
+  const selectedDomain = domains?.find((d) => d.name.split('.')[0] === isDomain)
+  const domainQuery = selectedDomain ? `?domain=${selectedDomain.id}` : ''
   return (
     <div className="p-3 flex flex-col items-center h-full">
       <span className="cursor-pointer">
@@ -38,6 +42,7 @@ export const MinMenu = ({
               {...menu}
               key={key}
               current={current}
+              query={menu.path === 'flow' ? domainQuery : undefined}
             />
           ))}
           <DomainMenu

@@ -4,6 +4,7 @@ import Image from 'next/image'
 import React from 'react'
 import DomainMenu from './domain-menu'
 import MenuItem from './menu-item'
+import { useDomain } from '@/hooks/sidebar/use-domain'
 
 type Props = {
   onExpand(): void
@@ -20,6 +21,9 @@ type Props = {
 }
 
 const MaxMenu = ({ current, domains, onExpand, onSignOut }: Props) => {
+  const { isDomain } = useDomain()
+  const selectedDomain = domains?.find((d) => d.name.split('.')[0] === isDomain)
+  const domainQuery = selectedDomain ? `?domain=${selectedDomain.id}` : ''
   return (
     <div className="py-3 px-4 flex flex-col h-full">
       <div className="flex justify-between items-center">
@@ -49,6 +53,7 @@ const MaxMenu = ({ current, domains, onExpand, onSignOut }: Props) => {
               {...menu}
               key={key}
               current={current}
+              query={menu.path === 'flow' ? domainQuery : undefined}
             />
           ))}
           <DomainMenu domains={domains} />
