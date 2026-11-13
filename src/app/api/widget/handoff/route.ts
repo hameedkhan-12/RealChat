@@ -28,7 +28,7 @@ export const POST = async (req: Request) => {
   const emails = room.domain.notificationEmails ?? []
   if (emails.length && room.customer) {
     try {
-      const { sendMail } = await import('@/actions/mailer')
+      const { sendMail } = await import('@/lib/mail')
       await sendMail({
         to: emails,
         subject: 'New chat handoff request',

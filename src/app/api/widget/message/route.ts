@@ -101,7 +101,7 @@ export const POST = async (req: Request) => {
   const emails = (room.domainId ? await client.domain.findUnique({ where: { id: room.domainId }, select: { notificationEmails: true } }) : null)?.notificationEmails ?? []
   if (emails.length && room.customer) {
     try {
-      const { sendMail } = await import('@/actions/mailer')
+      const { sendMail } = await import('@/lib/mail')
       await sendMail({
         to: emails,
         subject: 'New chat lead completed',

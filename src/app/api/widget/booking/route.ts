@@ -81,7 +81,7 @@ export const POST = async (req: Request) => {
   const manageUrl = `${appUrl}/manage/${booking.id}`
 
   try {
-    const { sendMail } = await import('@/actions/mailer')
+    const { sendMail } = await import('@/lib/mail')
     const ics = generateICS({
       bookingId: booking.id,
       domainName: room.domain.name,

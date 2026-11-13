@@ -1,20 +1,27 @@
-'use server'
-
+import 'server-only'
 import { currentUser } from '@clerk/nextjs/server'
 import { client } from '@/lib/prisma'
+import { AuthError } from '@/lib/errors'
 
-export type ActionResult<T = unknown> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; status?: number }
-
+export { AuthError }
 export type MinRole = 'OWNER' | 'AGENT'
 const roleRank: Record<MinRole, number> = { AGENT: 1, OWNER: 2 }
 
+/** Returns the signed-in user. Creates the local User row on first sight. */
 export async function requireUser() {
   const clerk = await currentUser()
-  if (!clerk) throw new Error('UNAUTHORIZED')
-  const user = await client.user.findUnique({ where: { clerkId: clerk.id } })
-  if (!user) throw new Error('UNAUTHORIZED')
+  if (!clerk) throw new AuthError('UNAUTHORIZED')
+  let user = await client.user.findUnique({ where: { clerkId: clerk.id } })
+  if (!user) {
+    const fullname =
+      clerk.fullName ?? clerk.firstName ?? clerk.primaryEmailAddress?.emailAddress ?? 'User'
+    try {
+      user = await client.user.create({ data: { clerkId: clerk.id, fullname, type: 'owner' } })
+    } catch {
+      user = await client.user.findUnique({ where: { clerkId: clerk.id } }) // lost a race
+    }
+  }
+  if (!user) throw new AuthError('UNAUTHORIZED')
   return { clerk, user }
 }
 
@@ -23,31 +30,26 @@ export async function requireDomainAccess(domainId: string, minRole: MinRole = '
   const membership = await client.domainMember.findUnique({
     where: { domainId_userId: { domainId, userId: user.id } },
   })
-  if (!membership) throw new Error('FORBIDDEN')
-  if (roleRank[membership.role] < roleRank[minRole]) throw new Error('FORBIDDEN')
+  if (!membership || roleRank[membership.role] < roleRank[minRole]) throw new AuthError('FORBIDDEN')
   return { user, membership }
 }
 
-export async function getDomainIdForResource(
-  kind: 'chatRoom' | 'booking' | 'customer' | 'flowStep' | 'helpdesk' | 'filterQuestion',
-  id: string
-) {
-  if (kind === 'chatRoom') return (await client.chatRoom.findUnique({ where: { id }, select: { domainId: true } }))?.domainId ?? null
-  if (kind === 'booking') return (await client.booking.findUnique({ where: { id }, select: { domainId: true } }))?.domainId ?? null
-  if (kind === 'customer') return (await client.customer.findUnique({ where: { id }, select: { domainId: true } }))?.domainId ?? null
-  if (kind === 'flowStep') return (await client.flowStep.findUnique({ where: { id }, select: { domainId: true } }))?.domainId ?? null
-  if (kind === 'helpdesk') return (await client.helpDesk.findUnique({ where: { id }, select: { domainId: true } }))?.domainId ?? null
-  if (kind === 'filterQuestion') return (await client.filterQuestions.findUnique({ where: { id }, select: { domainId: true } }))?.domainId ?? null
-  return null
+type ResourceKind = 'chatRoom' | 'booking' | 'customer' | 'flowStep'
+
+async function domainIdOf(kind: ResourceKind, id: string): Promise<string | null> {
+  const select = { domainId: true } as const
+  switch (kind) {
+    case 'chatRoom': return (await client.chatRoom.findUnique({ where: { id }, select }))?.domainId ?? null
+    case 'booking': return (await client.booking.findUnique({ where: { id }, select }))?.domainId ?? null
+    case 'customer': return (await client.customer.findUnique({ where: { id }, select }))?.domainId ?? null
+    case 'flowStep': return (await client.flowStep.findUnique({ where: { id }, select }))?.domainId ?? null
+  }
 }
 
-export async function requireResourceAccess(
-  kind: Parameters<typeof getDomainIdForResource>[0],
-  id: string,
-  minRole: MinRole = 'AGENT'
-) {
-  const domainId = await getDomainIdForResource(kind, id)
-  if (!domainId) throw new Error('NOT_FOUND')
+/** Use when you only have a child id. Missing resource and "not a member" look identical (FORBIDDEN). */
+export async function requireResourceAccess(kind: ResourceKind, id: string, minRole: MinRole = 'AGENT') {
+  const domainId = await domainIdOf(kind, id)
+  if (!domainId) throw new AuthError('FORBIDDEN')
   const access = await requireDomainAccess(domainId, minRole)
   return { ...access, domainId }
 }
