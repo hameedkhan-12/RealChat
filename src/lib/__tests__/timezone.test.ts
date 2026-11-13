@@ -38,6 +38,13 @@ describe('timezone utilities', () => {
       const utc = localToUTC('America/New_York', 2026, 5, 15, 8, 0)
       expect(utc.getUTCHours()).toBe(12)
     })
+
+    it('handles DST spring-forward: LA 09:00 on 2026-03-08 is 16:00Z not 17:00Z', () => {
+      // 2026-03-08 is the US spring-forward day; 09:00 LA local = PDT (UTC-7) = 16:00 UTC
+      const utc = localToUTC('America/Los_Angeles', 2026, 2, 8, 9, 0)
+      expect(utc.getUTCHours()).toBe(16)
+      expect(utc.getUTCDate()).toBe(8)
+    })
   })
 
   describe('addMinutes', () => {

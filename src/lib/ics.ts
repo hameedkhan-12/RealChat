@@ -1,5 +1,10 @@
 import { formatICSTime } from '@/lib/timezone'
 
+/** Escape a value for an ICS text property (RFC 5545). */
+function icsEscape(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n')
+}
+
 export function generateICS({
   bookingId,
   domainName,
@@ -36,8 +41,8 @@ export function generateICS({
     `DTSTAMP:${nowStr}`,
     `DTSTART:${startStr}`,
     `DTEND:${endStr}`,
-    `SUMMARY:${summary}`,
-    `DESCRIPTION:${description}`,
+    `SUMMARY:${icsEscape(summary)}`,
+    `DESCRIPTION:${icsEscape(description)}`,
     `URL:${manageUrl}`,
     'BEGIN:VALARM',
     'TRIGGER:-PT15M',

@@ -66,25 +66,18 @@ export function getLocalDateParts(timezone: string, utcDate: Date): { year: numb
  * Convert local date/time components in a timezone to a UTC Date.
  */
 export function localToUTC(timezone: string, year: number, month: number, day: number, hour: number, minute: number): Date {
-  // Create a date in the target timezone, then convert to UTC
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-  
-  // We need to find the UTC time that corresponds to the local time
-  // Approach: start with a guess and iterate
-  const guess = new Date(Date.UTC(year, month, day, hour, minute))
-  const offset = getTimezoneOffsetMinutes(timezone, guess)
-  
-  // local = utc + offset, so utc = local - offset
-  const utcMs = Date.UTC(year, month, day, hour, minute) - offset * 60000
-  return new Date(utcMs)
+  // Find the UTC instant whose rendering in `timezone` equals the given local wall-clock.
+  // The offset depends on the UTC instant itself (DST), so iterate to a fixed point.
+  // Treat the local wall-clock as a first guess for UTC, then correct.
+  let wallMs = Date.UTC(year, month, day, hour, minute)
+  let utc = wallMs
+  for (let i = 0; i < 4; i++) {
+    const offset = getTimezoneOffsetMinutes(timezone, new Date(utc))
+    const next = wallMs - offset * 60000
+    if (next === utc) break
+    utc = next
+  }
+  return new Date(utc)
 }
 
 /**

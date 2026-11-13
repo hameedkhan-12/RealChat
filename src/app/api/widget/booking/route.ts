@@ -1,54 +1,44 @@
 import { NextResponse } from 'next/server'
 import { client } from '@/lib/prisma'
-import { hashToken, getBearerToken } from '@/lib/session'
-import { rateLimit } from '@/lib/rate-limit'
+import { handle, readJson, assertSameOrigin, HttpError } from '@/lib/http'
+import { rateLimit, getClientIp } from '@/lib/rate-limit'
+import { requireWidgetSession } from '@/lib/widget-auth'
+import { sendMail } from '@/lib/mail'
 import { generateICS } from '@/lib/ics'
-import { formatICSTime } from '@/lib/timezone'
+import { BookingBody } from '@/lib/validation'
+import { createSessionToken, hashToken } from '@/lib/session'
 
-export const POST = async (req: Request) => {
-  const ip = req.headers.get('x-forwarded-for') || 'unknown'
-  const rl = await rateLimit(`book:${ip}`, 10, 60)
-  if (!rl.success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+export const POST = handle(async (req: Request) => {
+  assertSameOrigin(req)
+  const ip = getClientIp(req)
+  const rl = await rateLimit(`book:ip:${ip}`, 10, 60)
+  if (!rl.success) throw new HttpError(429, 'RATE_LIMITED')
 
-  const auth = req.headers.get('authorization') || ''
-  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : null
-  if (!token) return NextResponse.json({ error: 'Missing session token' }, { status: 401 })
+  const { room } = await requireWidgetSession(req)
+  const sessionRl = await rateLimit(`book:room:${room.id}`, 20, 60)
+  if (!sessionRl.success) throw new HttpError(429, 'RATE_LIMITED')
 
-  let body
-  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  const input = await readJson(req, BookingBody, 4096)
 
-  const { startsAt, endsAt, customerEmail, customerName } = body || {}
-  if (!startsAt || !customerEmail) return NextResponse.json({ error: 'startsAt and customerEmail required' }, { status: 400 })
-
-  const tokenHash = hashToken(token)
-  const room = await client.chatRoom.findFirst({
-    where: { sessionTokenHash: tokenHash },
-    include: { domain: true },
-  })
-  if (!room) return NextResponse.json({ error: 'Invalid session' }, { status: 403 })
-
-  const s = new Date(startsAt)
-  const e = endsAt ? new Date(endsAt) : new Date(s.getTime() + 30 * 60 * 1000)
-
-  // Transactional booking with conflict handling
-  const conflict = await client.booking.findFirst({
-    where: {
-      domainId: room.domainId,
-      status: 'CONFIRMED',
-      startsAt: { lt: e },
-      endsAt: { gt: s },
-    },
-  })
-  if (conflict) {
-    return NextResponse.json({ error: 'Slot no longer available', status: 409 })
+  const s = new Date(input.startsAt)
+  let e: Date
+  if (input.endsAt) {
+    e = new Date(input.endsAt)
+  } else {
+    e = new Date(s.getTime() + 30 * 60 * 1000)
   }
+  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e <= s) throw new HttpError(400, 'INVALID_TIMES')
 
-  let customer = await client.customer.findFirst({ where: { domainId: room.domainId, email: customerEmail } })
-  if (!customer) {
-    customer = await client.customer.create({ data: { domainId: room.domainId, email: customerEmail, name: customerName } })
-  }
+  const now = new Date()
+  const MIN_NOTICE_MS = 15 * 60 * 1000
+  const MAX_DURATION_MS = 8 * 60 * 60 * 1000
+  const MAX_DAYS_AHEAD = 365
+  if (s.getTime() < now.getTime() - MIN_NOTICE_MS) throw new HttpError(400, 'APPOINTMENT_IN_PAST')
+  if (s.getTime() < now.getTime() + MIN_NOTICE_MS) throw new HttpError(400, 'MIN_NOTICE_REQUIRED')
+  if (e.getTime() - s.getTime() > MAX_DURATION_MS) throw new HttpError(400, 'APPOINTMENT_TOO_LONG')
+  if (s.getTime() > now.getTime() + MAX_DAYS_AHEAD * 24 * 60 * 60 * 1000) throw new HttpError(400, 'APPOINTMENT_TOO_FAR_AHEAD')
 
-  const booking = await client.$transaction(async (tx) => {
+  const conflict = await client.$transaction(async (tx) => {
     const existing = await tx.booking.findFirst({
       where: {
         domainId: room.domainId,
@@ -57,60 +47,77 @@ export const POST = async (req: Request) => {
         endsAt: { gt: s },
       },
     })
-    if (existing) {
-      throw new Error('SLOT_CONFLICT')
-    }
-    return tx.booking.create({
-      data: {
-        domainId: room.domainId,
-        customerId: customer.id,
-        email: customerEmail,
-        name: customerName ?? null,
-        startsAt: s,
-        endsAt: e,
-        status: 'CONFIRMED',
-      },
+    if (existing) throw new HttpError(409, 'SLOT_CONFLICT')
+    return null
+  })
+  // conflict is null on success; if SLOT_CONFLICT thrown, handle() converts to 409 response
+
+  let customer = await client.customer.findFirst({ where: { domainId: room.domainId, email: input.email } })
+  if (!customer) {
+    customer = await client.customer.create({
+      data: { domainId: room.domainId, email: input.email, name: input.name },
     })
+  }
+
+  const booking = await client.booking.create({
+    data: {
+      domainId: room.domainId,
+      customerId: customer.id,
+      email: input.email,
+      name: input.name,
+      phone: input.phone ?? null,
+      visitorTimezone: input.visitorTimezone ?? null,
+      startsAt: s,
+      endsAt: e,
+      status: 'CONFIRMED',
+      manageTokenHash: hashToken(createSessionToken().token),
+    },
   })
 
   await client.chatRoom.update({ where: { id: room.id }, data: { lastActivityAt: new Date() } })
 
-  // Send confirmation email to visitor
-  const emails = room.domain.notificationEmails ?? []
+  // Send confirmation email (visitor + tenant)
+  const emails = (await client.domain.findUnique({
+    where: { id: room.domainId },
+    select: { notificationEmails: true, name: true },
+  }))?.notificationEmails ?? []
+
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
   const manageUrl = `${appUrl}/manage/${booking.id}`
+  const ics = generateICS({
+    bookingId: booking.id,
+    domainName: room.domain.name,
+    customerName: input.name,
+    customerEmail: input.email,
+    startsAt: s,
+    endsAt: e,
+    manageUrl,
+  })
+
+  const visitorTzLabel = input.visitorTimezone ? ` (${input.visitorTimezone})` : ''
+  const startLabel = s.toLocaleString(undefined, { timeZone: input.visitorTimezone }) + visitorTzLabel
+  const endLabel = e.toLocaleString(undefined, { timeZone: input.visitorTimezone }) + visitorTzLabel
 
   try {
-    const { sendMail } = await import('@/lib/mail')
-    const ics = generateICS({
-      bookingId: booking.id,
-      domainName: room.domain.name,
-      customerName: customerName,
-      customerEmail,
-      startsAt: s,
-      endsAt: e,
-      manageUrl,
-    })
-
-    // Notify tenant
     if (emails.length) {
       await sendMail({
         to: emails,
         subject: 'New booking confirmed',
-        text: `A new booking has been confirmed.\nCustomer: ${customerName || customerEmail}\nDate: ${s.toISOString()}\nManage: ${manageUrl}`,
+        text: `A new booking has been confirmed.\nCustomer: ${input.name || input.email}\nDate: ${startLabel} - ${endLabel}\nManage: ${manageUrl}`,
       })
     }
-
-    // Confirmation to visitor with .ics attachment (note: mailer currently doesn't support attachments,
-    // but we include the .ics content in the body and the manage link)
     await sendMail({
-      to: customerEmail,
+      to: input.email,
       subject: `Appointment confirmed - ${room.domain.name}`,
-      text: `Hi ${customerName || ''},\n\nYour appointment with ${room.domain.name} has been confirmed.\n\nDate: ${s.toLocaleString()}\nManage your appointment: ${manageUrl}\n\n${ics}`,
+      text: `Hi ${input.name || ''},\n\nYour appointment with ${room.domain.name} has been confirmed.\n\nDate: ${startLabel} - ${endLabel}\nManage your appointment: ${manageUrl}`,
+      attachments: [{ filename: 'appointment.ics', content: ics, contentType: 'text/calendar' }],
     })
   } catch {
     // email failure should not break the booking
   }
 
-  return NextResponse.json({ ok: true, bookingId: booking.id, customerId: customer.id, manageUrl })
-}
+  return NextResponse.json(
+    { ok: true, bookingId: booking.id, customerId: customer.id, manageUrl },
+    { headers: { 'Cache-Control': 'no-store' } }
+  )
+})

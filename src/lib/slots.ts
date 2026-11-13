@@ -44,7 +44,7 @@ export async function generateAvailableSlots(
   domainId: string,
   config: BookingSlotConfig,
   fromDate: Date, // UTC
-  toDate: Date,   // UTC
+  toDate: Date,   // UTC (upper bound, inclusive)
 ): Promise<TimeSlot[]> {
   const {
     slotMinutes,
@@ -54,19 +54,29 @@ export async function generateAvailableSlots(
     timezone,
   } = config
 
+  const pad = (n: number) => n.toString().padStart(2, '0')
+
   // Fetch availability rules
   const rules = await client.availabilityRule.findMany({
     where: { domainId },
     select: { weekday: true, startMinute: true, endMinute: true },
   })
 
-  // Fetch exceptions (closed dates)
+  // Fetch exceptions (closed dates), keyed by calendar date in the tenant's timezone.
+  // @db.Date values are calendar dates; read their UTC components directly so a tenant
+  // west of UTC is not off by one (P15).
   const exceptions = await client.availabilityException.findMany({
     where: { domainId },
     select: { date: true, closed: true },
   })
+  const closedDates = new Set<string>()
+  exceptions.forEach((e) => {
+    if (e.closed) {
+      closedDates.add(`${e.date.getUTCFullYear()}-${pad(e.date.getUTCMonth() + 1)}-${pad(e.date.getUTCDate())}`)
+    }
+  })
 
-  // Fetch confirmed bookings in the range
+  // Fetch confirmed bookings in the UTC range
   const bookings = await client.booking.findMany({
     where: {
       domainId,
@@ -76,90 +86,80 @@ export async function generateAvailableSlots(
     },
     select: { startsAt: true, endsAt: true },
   })
-
-  // Build set of booked UTC intervals
-  const bookedIntervals = bookings.map(b => ({
+  const bookedIntervals = bookings.map((b) => ({
     start: b.startsAt.getTime(),
     end: b.endsAt.getTime(),
   }))
 
-  // Build set of closed dates (YYYY-MM-DD in tenant tz)
-  const closedDates = new Set<string>()
-  exceptions.forEach(e => {
-    if (e.closed) {
-      const localDate = new Date(e.date.getTime())
-      // e.date is stored as a Date (midnight UTC typically). Convert to local date string.
-      closedDates.add(formatLocalDate(timezone, localDate))
-    }
-  })
-
   const slots: TimeSlot[] = []
   const now = new Date()
   const minNoticeMs = minNoticeHours * 60 * 60 * 1000
-  const maxDaysMs = maxDaysAhead * 24 * 60 * 60 * 1000
 
-  // Iterate day by day in tenant timezone starting from fromDate
-  let currentLocal = getLocalDateParts(timezone, fromDate)
-  currentLocal.hour = 0
-  currentLocal.minute = 0
+  // Hard cap: never generate more than maxDaysAhead days, regardless of requested range.
+  const maxTo = new Date(fromDate.getTime() + maxDaysAhead * 24 * 60 * 60 * 1000)
+  const toBound = toDate.getTime() < maxTo.getTime() ? toDate : maxTo
 
-  const maxDate = new Date(fromDate.getTime() + maxDaysMs)
+  // Iterate by LOCAL date (calendar day in tenant tz), not by +24h UTC (breaks across DST, P16).
+  let local = getLocalDateParts(timezone, fromDate)
+  local.hour = 0
+  local.minute = 0
 
-  for (let dayOffset = 0; dayOffset <= maxDaysAhead; dayOffset++) {
-    const targetDate = new Date(fromDate.getTime() + dayOffset * 24 * 60 * 60 * 1000)
-    const localParts = getLocalDateParts(timezone, targetDate)
-    const dateStr = `${localParts.year}-${String(localParts.month + 1).padStart(2, '0')}-${String(localParts.day).padStart(2, '0')}`
+  while (true) {
+    const dateStr = `${local.year}-${pad(local.month + 1)}-${pad(local.day)}`
 
-    // Skip if past min notice for today
-    if (dayOffset === 0) {
-      const nowUtcMs = now.getTime()
-      const minNoticeUtcMs = nowUtcMs + minNoticeMs
-      // We'll check per-slot below
+    // Stop once we pass the upper bound (compare local date to toBound rendered in tz)
+    const toBoundLocal = getLocalDateParts(timezone, toBound)
+    if (
+      local.year > toBoundLocal.year ||
+      (local.year === toBoundLocal.year && local.month > toBoundLocal.month) ||
+      (local.year === toBoundLocal.year && local.month === toBoundLocal.month && local.day > toBoundLocal.day)
+    ) {
+      break
     }
 
-    // Check if this date is closed
-    if (closedDates.has(dateStr)) continue
+    // Skip closed dates (P15)
+    if (closedDates.has(dateStr)) {
+      local = nextLocalDay(local)
+      continue
+    }
 
-    // Get weekday
-    const weekday = localParts.day // getDay() equivalent - but we need actual weekday
-    // getLocalDateParts doesn't return weekday. Use getUTCDay on a local date.
-    const weekdayDate = new Date(Date.UTC(localParts.year, localParts.month, localParts.day))
-    const dayOfWeek = weekdayDate.getUTCDay() // This is UTC day, but for date-only it's close enough
-    // Actually we need the local weekday. Let's compute properly:
-    const localWeekday = new Date(localParts.year, localParts.month, localParts.day).getDay()
+    const localWeekday = new Date(local.year, local.month, local.day).getDay()
+    const dayRules = rules.filter((r) => r.weekday === localWeekday)
+    if (dayRules.length === 0) {
+      local = nextLocalDay(local)
+      continue
+    }
 
-    const dayRules = rules.filter(r => r.weekday === localWeekday)
-    if (dayRules.length === 0) continue
-
-    // For each rule, generate slots
     for (const rule of dayRules) {
-      // Start time in local tz
       let slotStartLocalMin = rule.startMinute
       const slotEndLocalMin = rule.endMinute
 
       while (slotStartLocalMin + slotMinutes <= slotEndLocalMin) {
-        const slotStartUTC = localToUTC(timezone, localParts.year, localParts.month, localParts.day,
-          Math.floor(slotStartLocalMin / 60), slotStartLocalMin % 60)
+        const slotStartUTC = localToUTC(
+          timezone,
+          local.year,
+          local.month,
+          local.day,
+          Math.floor(slotStartLocalMin / 60),
+          slotStartLocalMin % 60
+        )
         const slotEndUTC = addMinutes(slotStartUTC, slotMinutes)
 
-        // Check min notice
+        // Min notice
         if (slotStartUTC.getTime() < now.getTime() + minNoticeMs) {
           slotStartLocalMin += slotMinutes + bufferMinutes
           continue
         }
 
-        // Check max days ahead
-        if (slotStartUTC.getTime() > maxDate.getTime()) {
+        // Respect upper bound
+        if (slotStartUTC.getTime() > toBound.getTime()) {
           slotStartLocalMin += slotMinutes + bufferMinutes
           continue
         }
 
-        // Check conflicts with bookings
         const slotStartMs = slotStartUTC.getTime()
         const slotEndMs = slotEndUTC.getTime()
-        const conflict = bookedIntervals.some(b =>
-          slotStartMs < b.end && slotEndMs > b.start
-        )
+        const conflict = bookedIntervals.some((b) => slotStartMs < b.end && slotEndMs > b.start)
 
         if (!conflict) {
           slots.push({
@@ -176,19 +176,21 @@ export async function generateAvailableSlots(
       }
     }
 
-    // Move to next day
-    currentLocal.day++
-    if (currentLocal.day > 31) {
-      currentLocal.month++
-      currentLocal.day = 1
-    }
-    if (currentLocal.month > 11) {
-      currentLocal.year++
-      currentLocal.month = 0
-    }
+    local = nextLocalDay(local)
   }
 
   return slots
+}
+
+function nextLocalDay(d: { year: number; month: number; day: number; hour: number; minute: number }) {
+  const next = new Date(Date.UTC(d.year, d.month, d.day + 1))
+  return {
+    year: next.getUTCFullYear(),
+    month: next.getUTCMonth(),
+    day: next.getUTCDate(),
+    hour: 0,
+    minute: 0,
+  }
 }
 
 export async function checkSlotConflict(
