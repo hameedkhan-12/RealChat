@@ -85,6 +85,13 @@ export const client = {
     create: vi.fn(),
     upsert: vi.fn(),
   },
+  knowledgeItem: {
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+  },
   $transaction: vi.fn(async (cb) => cb(client)),
 }
 

@@ -102,6 +102,7 @@ model Domain {
   invites            DomainInvite[]
   helpdesk           HelpDesk[]
   filterQuestions    FilterQuestions[]
+  knowledgeItems     KnowledgeItem[]
 
   @@index([publicKey])
 }
@@ -234,6 +235,8 @@ model ChatMessage {
   chatRoomId   String     @db.Uuid
   message      String
   senderType   SenderType @default(VISITOR)
+  kind         String?
+  metadata     Json?
   senderUserId String?    @db.Uuid
   seen         Boolean    @default(false)
   createdAt    DateTime   @default(now())
@@ -317,6 +320,22 @@ model FilterQuestions {
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
 
   @@index([domainId])
+}
+
+model KnowledgeItem {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domainId  String   @db.Uuid
+  title     String
+  content   String
+  category  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId])
+  @@index([domainId, isActive])
 }
 
 model DomainInvite {

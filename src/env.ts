@@ -16,6 +16,7 @@ const schema = z.object({
   SMTP_HOST: optional, SMTP_PORT: optional, SMTP_SECURE: optional,
   SMTP_USER: optional, SMTP_PASS: optional, SMTP_FROM: optional,
   CRON_SECRET: optional,
+  AI_API_KEY: optional, AI_BASE_URL: optional, AI_MODEL: optional,
   WIDGET_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   TRUSTED_PROXY_COUNT: z.coerce.number().int().min(0).max(5).default(1),
   RETENTION_DAYS: z.coerce.number().int().min(30).max(3650).default(365),

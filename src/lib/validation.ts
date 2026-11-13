@@ -24,15 +24,14 @@ export const SessionBody = z.object({
   locale: LocaleSchema.optional(),
 })
 
-export const MessageBody = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('consent') }),
+export const MessageBody = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('CONSENT'), accepted: z.boolean() }),
   z.object({
-    type: z.literal('answer'),
-    expectedStepKey: z.string().max(60),
-    answer: z.union([z.string().max(1000), z.array(z.string().max(200)).max(20), z.null()]),
+    kind: z.literal('FLOW_ANSWER'),
+    stepKey: z.string().max(60),
+    answer: z.union([z.string().max(2000), z.array(z.string().max(200)).max(20), z.null()]),
   }),
-  z.object({ type: z.literal('text'), text: z.string().trim().min(1).max(1000) }),
-  z.object({ type: z.literal('finish') }),
+  z.object({ kind: z.literal('QUESTION'), content: z.string().trim().min(1).max(2000) }),
 ])
 
 export const HandoffBody = z.object({ reason: z.string().trim().max(300).optional() })
