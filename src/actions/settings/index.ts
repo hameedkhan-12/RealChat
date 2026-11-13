@@ -126,9 +126,10 @@ export const onGetCurrentDomainInfo = async (domain: string) => {
   try {
     const dbUser = await client.user.findUnique({ where: { clerkId: user.id }, select: { id: true } })
     if (!dbUser) return
+    const slug = domain
     const domainRecord = await client.domain.findFirst({
       where: {
-        name: domain,
+        OR: [{ name: slug }, { name: { startsWith: `${slug}.` } }],
         members: { some: { userId: dbUser.id } },
       },
       include: {
