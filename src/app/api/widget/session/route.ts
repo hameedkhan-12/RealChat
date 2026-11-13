@@ -1,56 +1,41 @@
 import { NextResponse } from 'next/server'
 import { client } from '@/lib/prisma'
-import { createSessionToken, hashToken } from '@/lib/session'
-import { rateLimit } from '@/lib/rate-limit'
+import { handle, readJson, assertSameOrigin, HttpError } from '@/lib/http'
+import { rateLimit, getClientIp } from '@/lib/rate-limit'
+import { createSessionToken } from '@/lib/session'
 import { verifyTurnstile } from '@/lib/widget-auth'
-import { sessionSchema } from '@/lib/validation'
+import { SessionBody } from '@/lib/validation'
 
-export const POST = async (req: Request) => {
-  const ip = req.headers.get('x-forwarded-for') || 'unknown'
-  const rl = await rateLimit(`sess:${ip}`, 30, 60)
-  if (!rl.success) {
-    return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
-  }
+export const POST = handle(async (req: Request) => {
+  assertSameOrigin(req)
+  const ip = getClientIp(req)
+  const minute = await rateLimit(`sess:ip:${ip}`, 10, 60)
+  const day = await rateLimit(`sess:ipday:${ip}`, 100, 86_400)
+  if (!minute.success || !day.success) throw new HttpError(429, 'RATE_LIMITED')
 
-  let body
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const input = await readJson(req, SessionBody, 4096)
 
-  const parsed = sessionSchema.safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
-  }
+  const domain = await client.domain.findUnique({ where: { publicKey: input.key }, select: { id: true } })
+  if (!domain) throw new HttpError(404, 'UNKNOWN_KEY')
+  const perKey = await rateLimit(`sess:key:${input.key}`, 300, 60)
+  if (!perKey.success) throw new HttpError(429, 'RATE_LIMITED')
 
-  const { key: publicKey, turnstileToken } = parsed.data
-
-  const domain = await client.domain.findUnique({ where: { publicKey } })
-  if (!domain) return NextResponse.json({ error: 'Unknown domain key' }, { status: 404 })
-
-  const turnstileOk = await verifyTurnstile(turnstileToken)
-  if (!turnstileOk) return NextResponse.json({ error: 'Turnstile verification failed' }, { status: 403 })
-
-  // Create Customer ONCE for this session
-  const customer = await client.customer.create({
-    data: { domainId: domain.id, email: body.customerEmail ?? null, name: body.customerName ?? null },
-  })
-
-  // Create ChatRoom ONCE for this session
-  const chatRoom = await client.chatRoom.create({
-    data: {
-      domainId: domain.id,
-      customerId: customer.id,
-      status: 'BOT',
-      sessionTokenHash: '',
-      pageUrl: body.pageUrl || null,
-      utm: body.utm ?? null,
-    },
-  })
+  if (!(await verifyTurnstile(input.turnstileToken, ip))) throw new HttpError(403, 'BOT_CHECK_FAILED')
 
   const { token, hash } = createSessionToken()
-  await client.chatRoom.update({ where: { id: chatRoom.id }, data: { sessionTokenHash: hash } })
-
-  return NextResponse.json({ ok: true, sessionToken: token, chatRoomId: chatRoom.id, domainId: domain.id })
-}
+  const room = await client.chatRoom.create({
+    data: {
+      domainId: domain.id,
+      sessionTokenHash: hash,
+      pageUrl: input.pageUrl ?? null,
+      utm: input.utm ?? undefined,
+      locale: input.locale ?? null,
+      customer: { create: { domainId: domain.id } },
+    },
+    select: { id: true },
+  })
+  return NextResponse.json(
+    { ok: true, sessionToken: token, chatRoomId: room.id },
+    { headers: { 'Cache-Control': 'no-store' } }
+  )
+})

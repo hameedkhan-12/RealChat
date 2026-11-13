@@ -1,30 +1,31 @@
 import { NextResponse } from 'next/server'
 import { client } from '@/lib/prisma'
-import { hashToken, getBearerToken } from '@/lib/session'
+import { handle, HttpError } from '@/lib/http'
+import { rateLimit, getClientIp } from '@/lib/rate-limit'
+import { requireWidgetSession } from '@/lib/widget-auth'
 
-export const GET = async (req: Request) => {
-  const auth = req.headers.get('authorization') || ''
-  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : null
-  if (!token) return NextResponse.json({ error: 'Missing session token' }, { status: 401 })
+export const GET = handle(async (req: Request) => {
+  const { room } = await requireWidgetSession(req)
+  const rl = await rateLimit(`msgs:room:${room.id}`, 60, 60)
+  if (!rl.success) throw new HttpError(429, 'RATE_LIMITED')
 
-  const tokenHash = hashToken(token)
-  const room = await client.chatRoom.findFirst({
-    where: { sessionTokenHash: tokenHash },
-    select: {
-      id: true,
-      messages: {
-        orderBy: { createdAt: 'asc' },
-        select: { id: true, senderType: true, message: true, createdAt: true, seen: true },
-      },
+  const messages = await client.chatMessage.findMany({
+    where: { chatRoomId: room.id },
+    orderBy: { createdAt: 'asc' },
+    take: 200,
+    select: { id: true, senderType: true, message: true, createdAt: true },
+  })
+
+  return NextResponse.json(
+    {
+      ok: true,
+      messages: messages.map((m) => ({
+        id: m.id,
+        role: m.senderType === 'VISITOR' ? 'user' : m.senderType === 'AGENT' ? 'agent' : 'assistant',
+        content: m.message,
+        createdAt: m.createdAt,
+      })),
     },
-  })
-  if (!room) return NextResponse.json({ error: 'Invalid session' }, { status: 403 })
-
-  return NextResponse.json({
-    ok: true,
-    messages: room.messages.map((m) => ({
-      ...m,
-      role: m.senderType === 'VISITOR' ? 'user' : 'assistant',
-    })),
-  })
-}
+    { headers: { 'Cache-Control': 'no-store' } }
+  )
+})
