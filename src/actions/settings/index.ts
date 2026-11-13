@@ -4,6 +4,9 @@ import { client } from '@/lib/prisma'
 import { clerkClient, currentUser } from '@clerk/nextjs/server'
 import { requireDomainAccess } from '@/lib/auth'
 import { logger } from '@/lib/logger'
+import { csvRow } from '@/lib/csv'
+import { EmailSchema } from '@/lib/validation'
+import { hashToken } from '@/lib/session'
 import crypto from 'crypto'
 
 const generatePublicKey = () => crypto.randomBytes(18).toString('hex')
@@ -311,21 +314,25 @@ export const onGetDomainMembers = async (domainId: string): Promise<ActionResult
 }
 
 export const onInviteAgent = async (domainId: string, email: string): Promise<ActionResult> => {
-  await requireDomainAccess(domainId, 'OWNER')
-  try {
-    // Clerk invitation integration placeholder: store a pending membership.
-    // Full Clerk email-invitation flow requires the invited user to sign up and
-    // be mapped via domain onboarding logic. Here we record the intent.
-    return { ok: true, data: { email, role: 'AGENT', status: 'invited' } }
-  } catch (error: any) {
-    logger.error('onInviteAgent failed', { error: String(error), domainId })
-    return { ok: false, error: error.message || 'Failed to invite agent', status: 500 }
-  }
+  return action(async () => {
+    await requireDomainAccess(domainId, 'OWNER')
+    const emailInput = EmailSchema.parse(email)
+    const token = crypto.randomBytes(32).toString('hex')
+    const tokenHash = hashToken(token)
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    const invite = await client.domainInvite.create({
+      data: { domainId, email: emailInput, role: 'AGENT', tokenHash, expiresAt },
+      select: { id: true, email: true, expiresAt: true },
+    })
+    return { ok: true, data: { invite, token } }
+  })
 }
 
 export const onRemoveTeamMember = async (domainId: string, memberId: string): Promise<ActionResult> => {
   await requireDomainAccess(domainId, 'OWNER')
   try {
+    const membership = await client.domainMember.findFirst({ where: { id: memberId, domainId } })
+    if (!membership) return { ok: false, error: 'FORBIDDEN', status: 403 }
     await client.domainMember.delete({ where: { id: memberId } })
     return { ok: true, data: { message: 'Member removed' } }
   } catch (error) {
@@ -438,10 +445,10 @@ export const onExportLeadsCSV = async (domainId: string): Promise<ActionResult> 
       where: { domainId },
       select: { id: true, email: true, name: true, phone: true, consentAt: true, createdAt: true, questions: { orderBy: { createdAt: 'asc' } } },
     })
-    const lines = ['id,name,email,phone,consentAt,createdAt,questions']
+    const lines = [csvRow(['id', 'name', 'email', 'phone', 'consentAt', 'createdAt', 'questions'])]
     for (const c of customers) {
-      const q = c.questions.map((q) => `${q.question}=${q.answered}`).join('; ')
-      lines.push(`"${c.id}","${c.name || ''}","${c.email || ''}","${c.phone || ''}","${c.consentAt || ''}","${c.createdAt}","${q}"`)
+      const q = c.questions.map((q) => `${q.question}=${q.answered ?? ''}`).join('; ')
+      lines.push(csvRow([c.id, c.name ?? '', c.email ?? '', c.phone ?? '', c.consentAt ?? '', c.createdAt, q]))
     }
     const csv = lines.join('\n')
     return { ok: true, data: { csv, filename: `leads-${domainId}.csv` } }
@@ -512,11 +519,13 @@ export const onUpsertFlowStep = async (
   await requireDomainAccess(domainId)
   try {
     if (stepId) {
-      const step = await client.flowStep.update({
+      const step = await client.flowStep.findFirst({ where: { id: stepId, domainId } })
+      if (!step) return { ok: false, error: 'FORBIDDEN', status: 403 }
+      const updated = await client.flowStep.update({
         where: { id: stepId },
         data: { position, key, type: type as any, prompt, options, required, mapsTo: mapsTo as any, isActive },
       })
-      return { ok: true, data: { step } }
+      return { ok: true, data: { step: updated } }
     } else {
       const step = await client.flowStep.create({
         data: { domainId, position, key, type: type as any, prompt, options, required, mapsTo: mapsTo as any, isActive },
@@ -532,6 +541,8 @@ export const onUpsertFlowStep = async (
 export const onDeleteFlowStep = async (domainId: string, stepId: string): Promise<ActionResult> => {
   await requireDomainAccess(domainId)
   try {
+    const step = await client.flowStep.findFirst({ where: { id: stepId, domainId } })
+    if (!step) return { ok: false, error: 'FORBIDDEN', status: 403 }
     await client.flowStep.delete({ where: { id: stepId } })
     return { ok: true, data: { message: 'Flow step deleted' } }
   } catch (error) {

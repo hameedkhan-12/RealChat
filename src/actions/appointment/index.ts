@@ -2,25 +2,24 @@
 
 import { client } from '@/lib/prisma'
 import { currentUser } from '@clerk/nextjs/server'
-import { requireDomainAccess } from '@/lib/auth'
+import { requireDomainAccess, requireResourceAccess } from '@/lib/auth'
+import { action } from '@/lib/action'
 import { logger } from '@/lib/logger'
-import { checkSlotConflict } from '@/lib/slots'
 
 export type ActionResult<T = unknown> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number }
 
 export const onDomainCustomerResponses = async (customerId: string): Promise<ActionResult> => {
-  try {
+  return action(async () => {
+    const access = await requireResourceAccess('customer', customerId, 'AGENT')
     const customer = await client.customer.findUnique({
-      where: { id: customerId },
+      where: { id: customerId, domainId: access.domainId },
       select: { email: true, questions: { select: { id: true, question: true, answered: true } } },
     })
+    if (!customer) return { ok: false, error: 'FORBIDDEN', status: 403 }
     return { ok: true, data: customer }
-  } catch (error) {
-    logger.error('onDomainCustomerResponses failed', { error: String(error), customerId })
-    return { ok: false, error: 'Failed to load responses', status: 500 }
-  }
+  })
 }
 
 export const onGetAllDomainBookings = async (domainId: string): Promise<ActionResult> => {
@@ -50,24 +49,14 @@ export const onBookChatBotAppointment = async ({
   slot: string
   date: string
 }): Promise<ActionResult> => {
-  try {
+  return action(async () => {
+    await requireDomainAccess(domainId)
     const startsAt = new Date(`${date} ${slot}`)
     const safeStart = Number.isNaN(startsAt.getTime()) ? new Date() : startsAt
     const endsAt = new Date(safeStart.getTime() + 30 * 60 * 1000)
 
     // Transactional booking with conflict handling
-    const conflict = await checkSlotConflict(domainId, safeStart, endsAt)
-    if (conflict) {
-      return { ok: false, error: 'Slot no longer available', status: 409 }
-    }
-
-    let customer = await client.customer.findFirst({ where: { domainId, email: customerEmail } })
-    if (!customer) {
-      customer = await client.customer.create({ data: { domainId, email: customerEmail, name: customerName } })
-    }
-
-    const booking = await client.$transaction(async (tx) => {
-      // Re-check conflict inside transaction
+    const conflict = await client.$transaction(async (tx) => {
       const existing = await tx.booking.findFirst({
         where: {
           domainId,
@@ -79,27 +68,28 @@ export const onBookChatBotAppointment = async ({
       if (existing) {
         throw new Error('SLOT_CONFLICT')
       }
-      return tx.booking.create({
-        data: {
-          domainId,
-          customerId: customer.id,
-          email: customerEmail,
-          name: customerName ?? null,
-          startsAt: safeStart,
-          endsAt,
-          status: 'CONFIRMED',
-        },
-      })
+      return null
+    })
+
+    let customer = await client.customer.findFirst({ where: { domainId, email: customerEmail } })
+    if (!customer) {
+      customer = await client.customer.create({ data: { domainId, email: customerEmail, name: customerName } })
+    }
+
+    const booking = await client.booking.create({
+      data: {
+        domainId,
+        customerId: customer.id,
+        email: customerEmail,
+        name: customerName ?? null,
+        startsAt: safeStart,
+        endsAt,
+        status: 'CONFIRMED',
+      },
     })
 
     return { ok: true, data: { status: 200, message: 'Booking confirmed', bookingId: booking.id, customerId: customer.id } }
-  } catch (error: any) {
-    if (error.message === 'SLOT_CONFLICT') {
-      return { ok: false, error: 'Slot no longer available', status: 409 }
-    }
-    logger.error('onBookChatBotAppointment failed', { error: String(error), domainId })
-    return { ok: false, error: 'Failed to book appointment', status: 500 }
-  }
+  })
 }
 
 export const onBookNewAppointment = async (
@@ -109,42 +99,40 @@ export const onBookNewAppointment = async (
   date: string,
   email: string
 ): Promise<ActionResult> => {
-  try {
+  return action(async () => {
+    await requireDomainAccess(domainId)
     const startsAt = new Date(`${date} ${slot}`)
     const safeStart = Number.isNaN(startsAt.getTime()) ? new Date() : startsAt
     const endsAt = new Date(safeStart.getTime() + 30 * 60 * 1000)
+
+    // Verify the customer belongs to this domain (IDOR guard)
+    const customer = await client.customer.findFirst({ where: { id: customerId, domainId } })
+    if (!customer) return { ok: false, error: 'FORBIDDEN', status: 403 }
+
     await client.booking.create({
-      data: { domainId, customerId, email, startsAt: safeStart, endsAt, status: 'CONFIRMED' },
+      data: { domainId, customerId: customer.id, email, startsAt: safeStart, endsAt, status: 'CONFIRMED' },
     })
     return { ok: true, data: { status: 200, message: 'Booking created' } }
-  } catch (error) {
-    logger.error('onBookNewAppointment failed', { error: String(error), domainId })
-    return { ok: false, error: 'Failed to create booking', status: 500 }
-  }
+  })
 }
 
 export const saveAnswers = async (questions: Record<string, string>, customerId: string): Promise<ActionResult> => {
-  try {
-    const customer = await client.customer.findUnique({ where: { id: customerId }, select: { domainId: true } })
-    if (customer) {
-      await requireDomainAccess(customer.domainId)
-    }
+  return action(async () => {
+    const access = await requireResourceAccess('customer', customerId, 'AGENT')
     for (const [stepKey, answered] of Object.entries(questions || {})) {
       await client.customerResponses.create({
         data: { customerId, stepKey, question: stepKey, answered },
       })
     }
-    return { ok: true, data: { messege: 'Updated Responses' } }
-  } catch (error) {
-    logger.error('saveAnswers failed', { error: String(error), customerId })
-    return { ok: false, error: 'Failed to save answers', status: 500 }
-  }
+    return { ok: true, data: { saved: true, domainId: access.domainId } }
+  })
 }
 
-export const onGetAllBookingsForCurrentUser = async (clerkId: string) => {
-  try {
+export const onGetAllBookingsForCurrentUser = async () => {
+  return action(async () => {
+    const { user } = await requireUser()
     const bookings = await client.booking.findMany({
-      where: { domain: { members: { some: { user: { clerkId } } } } },
+      where: { domain: { members: { some: { userId: user.id } } } },
       select: {
         id: true,
         createdAt: true,
@@ -166,9 +154,7 @@ export const onGetAllBookingsForCurrentUser = async (clerkId: string) => {
         Customer: { Domain: { name: b.customer?.domain?.name ?? '' } },
       })),
     }
-  } catch (error) {
-    logger.error('onGetAllBookingsForCurrentUser failed', { error: String(error), clerkId })
-  }
+  })
 }
 
 export const getUserAppointments = async (): Promise<ActionResult> => {

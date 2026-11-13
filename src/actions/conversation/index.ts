@@ -230,9 +230,10 @@ export const onOwnerSendMessage = async (
 }
 
 export const onGetCustomerAnswers = async (customerId: string): Promise<ActionResult> => {
-  try {
+  return action(async () => {
+    const access = await requireResourceAccess('customer', customerId, 'AGENT')
     const customer = await client.customer.findUnique({
-      where: { id: customerId },
+      where: { id: customerId, domainId: access.domainId },
       select: {
         email: true,
         name: true,
@@ -242,10 +243,7 @@ export const onGetCustomerAnswers = async (customerId: string): Promise<ActionRe
         chatRooms: { select: { id: true, status: true, createdAt: true } },
       },
     })
-    if (!customer) return { ok: false, error: 'Customer not found', status: 404 }
+    if (!customer) return { ok: false, error: 'FORBIDDEN', status: 403 }
     return { ok: true, data: customer }
-  } catch (error) {
-    logger.error('onGetCustomerAnswers failed', { error: String(error), customerId })
-    return { ok: false, error: 'Failed to load answers', status: 500 }
-  }
+  })
 }

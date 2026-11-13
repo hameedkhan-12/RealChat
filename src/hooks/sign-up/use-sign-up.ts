@@ -91,13 +91,9 @@ export const useSignUpForm = () => {
           return
         }
 
-        const registered = await onCompleteUserRegistration(
-          values.fullname,
-          userId,
-          values.type
-        )
+        const registered = await onCompleteUserRegistration()
 
-        if (registered?.status === 200 && registered.user) {
+        if (registered?.ok && registered.data) {
           await setActive({
             session: completeSignUp.createdSessionId,
           })
