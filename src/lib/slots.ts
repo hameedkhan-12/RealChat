@@ -98,15 +98,15 @@ export async function generateAvailableSlots(
   const minNoticeMs = minNoticeHours * 60 * 60 * 1000
   const maxDaysMs = maxDaysAhead * 24 * 60 * 60 * 1000
 
-  // Iterate day by day in tenant timezone
-  let currentLocal = getLocalDateParts(timezone, now)
+  // Iterate day by day in tenant timezone starting from fromDate
+  let currentLocal = getLocalDateParts(timezone, fromDate)
   currentLocal.hour = 0
   currentLocal.minute = 0
 
-  const maxDate = new Date(now.getTime() + maxDaysMs)
+  const maxDate = new Date(fromDate.getTime() + maxDaysMs)
 
   for (let dayOffset = 0; dayOffset <= maxDaysAhead; dayOffset++) {
-    const targetDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000)
+    const targetDate = new Date(fromDate.getTime() + dayOffset * 24 * 60 * 60 * 1000)
     const localParts = getLocalDateParts(timezone, targetDate)
     const dateStr = `${localParts.year}-${String(localParts.month + 1).padStart(2, '0')}-${String(localParts.day).padStart(2, '0')}`
 

@@ -8,36 +8,34 @@
 export function parseHex(hex: string): { r: number; g: number; b: number; a: number } | null {
   const h = hex.replace('#', '')
   if (h.length === 3) {
-    return {
-      r: parseInt(h[0] + h[0], 16),
-      g: parseInt(h[1] + h[1], 16),
-      b: parseInt(h[2] + h[2], 16),
-      a: 1,
-    }
+    const r = parseInt(h[0] + h[0], 16)
+    const g = parseInt(h[1] + h[1], 16)
+    const b = parseInt(h[2] + h[2], 16)
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return null
+    return { r, g, b, a: 1 }
   }
   if (h.length === 4) {
-    return {
-      r: parseInt(h[0] + h[0], 16),
-      g: parseInt(h[1] + h[1], 16),
-      b: parseInt(h[2] + h[2], 16),
-      a: parseInt(h[3] + h[3], 16) / 255,
-    }
+    const r = parseInt(h[0] + h[0], 16)
+    const g = parseInt(h[1] + h[1], 16)
+    const b = parseInt(h[2] + h[2], 16)
+    const a = parseInt(h[3] + h[3], 16) / 255
+    if (isNaN(r) || isNaN(g) || isNaN(b) || isNaN(a)) return null
+    return { r, g, b, a }
   }
   if (h.length === 6) {
-    return {
-      r: parseInt(h.substring(0, 2), 16),
-      g: parseInt(h.substring(2, 4), 16),
-      b: parseInt(h.substring(4, 6), 16),
-      a: 1,
-    }
+    const r = parseInt(h.substring(0, 2), 16)
+    const g = parseInt(h.substring(2, 4), 16)
+    const b = parseInt(h.substring(4, 6), 16)
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return null
+    return { r, g, b, a: 1 }
   }
   if (h.length === 8) {
-    return {
-      r: parseInt(h.substring(0, 2), 16),
-      g: parseInt(h.substring(2, 4), 16),
-      b: parseInt(h.substring(4, 6), 16),
-      a: parseInt(h.substring(6, 8), 16) / 255,
-    }
+    const r = parseInt(h.substring(0, 2), 16)
+    const g = parseInt(h.substring(2, 4), 16)
+    const b = parseInt(h.substring(4, 6), 16)
+    const a = parseInt(h.substring(6, 8), 16) / 255
+    if (isNaN(r) || isNaN(g) || isNaN(b) || isNaN(a)) return null
+    return { r, g, b, a }
   }
   return null
 }

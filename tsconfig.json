@@ -26,9 +26,13 @@
         "./src/*"
       ]
     },
+    "types": [
+      "vitest",
+      "node"
+    ],
     "target": "ES2017"
   },
-"include": [
+  "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
