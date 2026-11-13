@@ -230,7 +230,7 @@ export function FlowBuilderForm({ domainId }: Props) {
                 <select
                   value={form.type}
                   onChange={(e) => setForm({ ...form, type: e.target.value })}
-                  className="w-full px-2 py-1 rounded border text-sm"
+                  className="w-full px-2 py-1 dark:bg-black dark:text-white rounded border text-sm"
                 >
                   {['CHOICE', 'MULTI_CHOICE', 'TEXT', 'NUMBER', 'EMAIL', 'PHONE'].map((t) => (
                     <option key={t} value={t}>{TYPE_LABELS[t]}</option>
@@ -293,7 +293,7 @@ export function FlowBuilderForm({ domainId }: Props) {
                 <select
                   value={form.mapsTo}
                   onChange={(e) => setForm({ ...form, mapsTo: e.target.value })}
-                  className="w-full px-2 py-1 rounded border text-sm"
+                  className="w-full dark:bg-black dark:text-white px-2 py-1 rounded border text-sm"
                 >
                   {['NONE', 'NAME', 'EMAIL', 'PHONE'].map((m) => (
                     <option key={m} value={m}>{MAPS_TO_LABELS[m]}</option>
