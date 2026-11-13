@@ -85,7 +85,7 @@ export const POST = handle(async (req: Request): Promise<Response> => {
       }
       await client.chatRoom.update({
         where: { id: room.id },
-        data: { status: 'CLOSED', flowCompletedAt: new Date(), lastActivityAt: new Date() },
+        data: { flowCompletedAt: new Date(), lastActivityAt: new Date() },
       })
       const chatBot = await client.chatBot.findUnique({ where: { domainId: room.domainId } })
       const actions = []
@@ -94,7 +94,7 @@ export const POST = handle(async (req: Request): Promise<Response> => {
       actions.push({ type: 'finish', label: 'No thanks' })
       return NextResponse.json({
         ok: true,
-        room: { status: 'CLOSED' },
+        room: { status: room.status },
         messages: [],
         currentStep: null,
         flowCompleted: true,
@@ -204,11 +204,11 @@ async function handleFlowStep(
   }
   await client.chatRoom.update({
     where: { id: room.id },
-    data: { status: 'CLOSED', lastActivityAt: new Date() },
+    data: { flowCompletedAt: new Date(), lastActivityAt: new Date() },
   })
   return NextResponse.json({
     ok: true,
-    room: { status: 'CLOSED' },
+    room: { status: room.status },
     messages: [],
     currentStep: null,
     flowCompleted: true,

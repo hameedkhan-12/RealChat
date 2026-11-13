@@ -11,6 +11,10 @@ vi.mock('@/lib/prisma', () => ({
     domain: { findUnique: mockFindUnique },
     chatRoom: { create: mockCreate },
     customer: { create: vi.fn().mockResolvedValue({ id: 'customer-1' }) },
+    $transaction: vi.fn(async (cb) => cb({
+      customer: { create: vi.fn().mockResolvedValue({ id: 'customer-1' }) },
+      chatRoom: { create: mockCreate },
+    })),
   },
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () => '1.2.3.4' }))

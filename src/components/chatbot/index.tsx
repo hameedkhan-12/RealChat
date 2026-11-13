@@ -16,11 +16,104 @@ type Props = {
   lang?: 'en' | 'ar'
 }
 
+type ChatMessageType = {
+  id: string
+  role: string
+  content: string
+  createdAt?: string
+  options?: string[]
+  widget?: string
+  widgetData?: any
+}
+
+type ChatOption = { label: string; value: string }
+
+let turnstileScriptLoaded = false
+
+function loadTurnstile(): Promise<void> {
+  if (turnstileScriptLoaded) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src =
+      'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=__realchatTurnstileOnLoad'
+    script.async = true
+    script.onerror = reject
+    document.head.appendChild(script)
+    script.onload = () => resolve()
+  })
+}
+
+declare global {
+  interface Window {
+    __realchatTurnstileOnLoad?: () => void
+    turnstile?: {
+      render: (selector: string, opts: any) => number
+      reset: (widgetId: number) => void
+    }
+  }
+}
+
+function renderMessage(
+  m: ChatMessageType,
+  i: number,
+  isUser: boolean,
+  bubbleCls: string,
+  optionCls: string,
+  onSelectOption: (option: string) => void,
+  onBookSlot: () => void,
+  onRestartChat: () => void,
+  requestHandoff: () => void,
+  bookingEnabled: boolean,
+  handoffEnabled: boolean,
+  strings: any,
+  primary: string
+) {
+  return (
+    <div key={i} className={isUser ? 'flex justify-end' : 'flex justify-start'}>
+      <div className={bubbleCls}>
+        {m.content}
+        {m.role === 'assistant' && m.options && m.options.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {m.options.map((o: string, j: number) => (
+              <button key={j} type="button" onClick={() => onSelectOption(o)} className={optionCls}>
+                {o}
+              </button>
+            ))}
+          </div>
+        )}
+        {m.role === 'assistant' && m.widget === 'chat-ended' && (
+          <div className="mt-3 flex gap-2">
+            {bookingEnabled && (
+              <button type="button" onClick={onBookSlot} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">
+                {strings.bookACall || 'Book a call'}
+              </button>
+            )}
+            {handoffEnabled && (
+              <button type="button" onClick={requestHandoff} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">
+                {strings.talkToAPerson || 'Talk to a person'}
+              </button>
+            )}
+            <button type="button" onClick={onRestartChat} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">
+              {strings.noThanks || 'No thanks'}
+            </button>
+          </div>
+        )}
+        {m.role === 'assistant' && (
+          <div className="text-[10px] text-neutral-400 mt-0.5 self-end">
+            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
   const {
     botOpened, onOpenChatBot, handleSendMessage, onSelectOption, onBookSlot, onRestartChat,
     onChats, onAiTyping, currentBot, loading, config, sessionToken,
     consentGiven, setConsentGiven, requestHandoff, status, acceptConsent,
+    sendQuestion, errors, turnstileSiteKey, flow, locale,
   } = useChatBot(publicKey)
 
   const brand = config?.brand
@@ -36,14 +129,45 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
   const isRTL = defaultLocale === 'ar'
   const handoffEnabled = config?.features.handoff !== false
   const bookingEnabled = config?.features.booking !== false
-  const consentRequired = !!brand?.consentText && !consentGiven
+  const consentRequired = !consentGiven
 
   const [expanded, setExpanded] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
+  const [turnstileWidgetId, setTurnstileWidgetId] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const launcherSideCls = position === 'BOTTOM_LEFT' ? 'left-4' : 'right-4'
   const launcherLabelCls = `absolute -top-6 ${position === 'BOTTOM_LEFT' ? 'left-0' : 'right-0'} whitespace-nowrap text-[11px] font-medium bg-black/80 text-white px-2 py-1 rounded`
   const side = position === 'BOTTOM_LEFT' ? 'left' : 'right'
   const winPosStyle: React.CSSProperties = { position: 'fixed', bottom: '4px', [side]: '4px' }
+
+  useEffect(() => {
+    if (!turnstileSiteKey || turnstileWidgetId !== null) return
+    loadTurnstile().then(() => {
+      const container = document.createElement('div')
+      container.id = 'realchat-turnstile-widget'
+      container.style.position = 'absolute'
+      container.style.width = '0'
+      container.style.height = '0'
+      container.style.overflow = 'hidden'
+      document.body.appendChild(container)
+      const id = (window as any).turnstile.render('#realchat-turnstile-widget', {
+        sitekey: turnstileSiteKey,
+        callback: (token: string) => setTurnstileToken(token),
+        'error-callback': () => setTurnstileToken(null),
+        'expired-callback': () => setTurnstileToken(null),
+      })
+      setTurnstileWidgetId(id)
+    }).catch(() => {
+      // Turnstile load failure — proceed without token
+    })
+  }, [turnstileSiteKey])
+
+  useEffect(() => {
+    if (turnstileWidgetId !== null && sessionToken) {
+      ;(window as any).turnstile.reset(turnstileWidgetId)
+      setTurnstileToken(null)
+    }
+  }, [sessionToken, turnstileWidgetId])
 
   if (consentRequired) {
     return (
@@ -62,6 +186,7 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
           )}
           <h2 className="text-lg font-bold mb-2">{botName}</h2>
           <p className="text-sm mb-6 opacity-90 max-w-md">{brand?.consentText || 'By continuing you agree to our terms.'}</p>
+          {errors && <p className="text-sm mb-4 text-red-400">{errors}</p>}
           <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
             <Button
               onClick={() => { setConsentGiven(true); acceptConsent() }}
@@ -81,6 +206,13 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
       </div>
     )
   }
+
+  const bubbleCls = (isUser: boolean) =>
+    isUser
+      ? `max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed bg-[${primary}] text-white rounded-tr-xs shadow-sm`
+      : 'max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed bg-[#F3F4F6] text-[#18181B] rounded-tl-xs shadow-sm border border-neutral-200/40'
+
+  const optionCls = `px-3 py-1.5 text-xs font-medium rounded-xl border border-[${primary}] text-[${primary}] bg-white hover:bg-[${primary}] hover:text-white transition-colors cursor-pointer`
 
   return (
     <>
@@ -152,37 +284,23 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
               {!loading && onChats.length === 0 && (
                 <div className="text-[12px] text-neutral-500 text-center mt-10">{welcome}</div>
               )}
+              {errors && <div className="text-[12px] text-red-500 text-center mt-4">{errors}</div>}
               {onChats.map((m, i) => {
                 const isUser = m.role === 'user'
-                const bubbleCls = `max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${isUser ? `bg-[${primary}] text-white rounded-tr-xs shadow-sm` : 'bg-[#F3F4F6] text-[#18181B] rounded-tl-xs shadow-sm border border-neutral-200/40'}`
-                const optionCls = `px-3 py-1.5 text-xs font-medium rounded-xl border border-[${primary}] text-[${primary}] bg-white hover:bg-[${primary}] hover:text-white transition-colors cursor-pointer`
-                return (
-                  <div key={i} className={isUser ? 'flex justify-end' : 'flex justify-start'}>
-                    <div className={bubbleCls}>
-                      {m.content}
-                      {m.role === 'assistant' && m.options && m.options.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-2">
-                          {m.options.map((o: string, j: number) => (
-                            <button key={j} type="button" onClick={() => onSelectOption(o)} className={optionCls}>{o}</button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    {m.role === 'assistant' && m.widget === 'chat-ended' && (
-                      <div className="mt-3 flex gap-2">
-                        {bookingEnabled && (
-                          <button type="button" onClick={() => onBookSlot('', '')} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">{strings.bookACall || 'Book a call'}</button>
-                        )}
-                        {handoffEnabled && (
-                          <button type="button" onClick={requestHandoff} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">{strings.talkToAPerson || 'Talk to a person'}</button>
-                        )}
-                        <button type="button" onClick={onRestartChat} className="px-3 py-1.5 text-xs rounded border border-neutral-300 hover:bg-neutral-50">{strings.noThanks || 'No thanks'}</button>
-                      </div>
-                    )}
-                    {m.role === 'assistant' && (
-                      <div className="text-[10px] text-neutral-400 mt-0.5 self-end">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                    )}
-                  </div>
+                return renderMessage(
+                  m as ChatMessageType,
+                  i,
+                  isUser,
+                  bubbleCls(isUser),
+                  optionCls,
+                  onSelectOption,
+                  () => onBookSlot('', ''),
+                  onRestartChat,
+                  requestHandoff,
+                  bookingEnabled,
+                  handoffEnabled,
+                  strings,
+                  primary
                 )
               })}
               {onAiTyping && (
@@ -192,10 +310,10 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
               )}
             </div>
 
-            <form onSubmit={(e) => { e.preventDefault(); handleSendMessage({ content: inputRef.current?.value ?? '' }) }} className="px-4 py-3 border-t border-neutral-200/80 shrink-0 bg-white">
+            <form onSubmit={(e) => { e.preventDefault(); const v = inputRef.current?.value ?? ''; if (v) sendQuestion(v) }} className="px-4 py-3 border-t border-neutral-200/80 shrink-0 bg-white">
               <div className="flex items-center gap-2 bg-neutral-50 rounded-full px-3 py-1.5 border border-neutral-200/60">
                 <Label htmlFor="widget-input" className="sr-only">{strings.send || 'Send message'}</Label>
-                <Input ref={inputRef} id="widget-input" placeholder={strings.placeholder || "Type your message…"} className="flex-1 bg-transparent text-[13px] text-neutral-900 placeholder:text-neutral-400 outline-none" disabled={!sessionToken} />
+                <Input ref={inputRef} id="widget-input" placeholder={strings.placeholder || "Type your message…"} className="flex-1 bg-transparent text-[13px] text-neutral-900 placeholder:text-neutral-400 outline-none" disabled={!sessionToken || onAiTyping} />
                 <Button type="submit" size="sm" className="h-7 w-7 p-0 rounded-full flex items-center justify-center" style={{ backgroundColor: primary, color: '#ffffff' }} disabled={!sessionToken || onAiTyping}>
                   <Send className="w-3.5 h-3.5" />
                 </Button>

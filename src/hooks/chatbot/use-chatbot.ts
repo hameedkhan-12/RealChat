@@ -25,6 +25,9 @@ type WidgetConfig = {
   defaultLocale: string
   brand: Brand
   features: { booking: boolean; handoff: boolean }
+  turnstileSiteKey?: string | null
+  flow: any[]
+  locale: string
 }
 
 type UseChatBotReturn = {
@@ -49,22 +52,43 @@ type UseChatBotReturn = {
   status: 'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'
   acceptConsent: () => Promise<void>
   sendMessage: (text: string, answer?: string | null) => Promise<void>
+  sendQuestion: (content: string) => Promise<void>
   errors: any
   getValues: any
+  turnstileSiteKey?: string | null
+  flow: any[]
+  locale: string
 }
 
 export const useChatBot = (publicKey?: string): UseChatBotReturn => {
   const [currentBot, setCurrentBot] = useState<any>()
   const [config, setConfig] = useState<WidgetConfig | undefined>()
-  const [sessionToken, setSessionToken] = useState<string | undefined>()
-  const [chatRoomId, setChatRoomId] = useState<string | undefined>()
+  const [sessionToken, setSessionToken] = useState<string | undefined>(() => {
+    // Restore session from localStorage on mount
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('realchat_session_token') || undefined
+    }
+    return undefined
+  })
+  const [chatRoomId, setChatRoomId] = useState<string | undefined>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('realchat_chat_room_id') || undefined
+    }
+    return undefined
+  })
+  const [consentGiven, setConsentGiven] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('realchat_consent_given') === 'true'
+    }
+    return false
+  })
   const messageWindowRef = useRef<HTMLDivElement | null>(null)
   const [botOpened, setBotOpened] = useState(false)
   const [loading, setLoading] = useState(true)
   const [onChats, setOnChats] = useState<ChatMessageType[]>([])
   const [onAiTyping, setOnAiTyping] = useState(false)
-  const [consentGiven, setConsentGiven] = useState(false)
   const [status, setStatus] = useState<'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'>('BOT')
+  const [error, setError] = useState<string | null>(null)
 
   const onScrollToBottom = useCallback(() => {
     messageWindowRef.current?.scroll({ top: messageWindowRef.current.scrollHeight, left: 0, behavior: 'smooth' })
@@ -89,36 +113,73 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
     return [{ role: 'assistant', content: welcome }]
   }
 
-  const initSession = useCallback(async (pk: string) => {
+  // Restore messages after session restoration
+  const loadMessages = useCallback(async () => {
+    if (!chatRoomId) return
+    try {
+      const res = await fetch('/api/widget/messages', {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.ok && data.messages) {
+          setOnChats(
+            data.messages.map((m: any) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              createdAt: m.createdAt,
+            }))
+          )
+        }
+      }
+    } catch {
+      // messages load failure is non-fatal
+    }
+  }, [chatRoomId, sessionToken])
+
+  const initSession = useCallback(async (pk: string, turnstileToken?: string) => {
     try {
       const res = await fetch('/api/widget/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: pk }),
+        body: JSON.stringify({ key: pk, turnstileToken }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        setError('Unable to start session')
+        setLoading(false)
+        return
+      }
       const data = await res.json()
       if (data.ok) {
         setSessionToken(data.sessionToken)
         setChatRoomId(data.chatRoomId)
+        // Persist for refresh restoration
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('realchat_session_token', data.sessionToken)
+          localStorage.setItem('realchat_chat_room_id', data.chatRoomId)
+        }
         const cfgRes = await fetch('/api/widget/config', {
           headers: { Authorization: `Bearer ${data.sessionToken}` },
         })
         if (cfgRes.ok) {
           const cfg = await cfgRes.json()
           if (cfg.ok) {
-            setConfig(cfg.config as WidgetConfig)
-            setCurrentBot(cfg.config.chatBot)
-            setOnChats(buildInitialMessages(cfg.config.chatBot))
+            setConfig(cfg as WidgetConfig)
+            setCurrentBot(cfg.bot)
             setStatus('BOT')
+            setOnChats(buildInitialMessages(cfg.bot))
+            // Load existing messages for this session
+            await loadMessages()
           }
         }
-        setLoading(false)
       }
+      setLoading(false)
     } catch {
+      setError('Unable to start session')
       setLoading(false)
     }
-  }, [])
+  }, [loadMessages])
 
   useEffect(() => {
     if (publicKey) initSession(publicKey)
@@ -145,22 +206,32 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
     const updatedChats = [...onChats, userMsg]
     setOnChats(updatedChats)
     setOnAiTyping(true)
+    setError(null)
     try {
       const res = await fetch('/api/widget/message', {
         method: 'POST',
         headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'answer', answer }),
+        body: JSON.stringify({ kind: 'FLOW_ANSWER', stepKey: '', answer }),
       })
       setOnAiTyping(false)
-      if (!res.ok) return
+      if (!res.ok) {
+        // Roll back the optimistic user message on failure
+        setOnChats((prev) => prev.filter((m) => m !== userMsg))
+        setError('Failed to send message')
+        return
+      }
       const data = await res.json()
-      if (!data.ok) return
+      if (!data.ok) {
+        setOnChats((prev) => prev.filter((m) => m !== userMsg))
+        setError('Failed to send message')
+        return
+      }
 
       if (data.kind === 'step' && data.step) {
         const botMsg: ChatMessageType = { role: 'assistant', content: data.step.prompt }
         setOnChats((prev) => [...prev, botMsg])
       }
-      if (data.kind === 'complete') {
+      if (data.flowCompleted) {
         setStatus('CLOSED')
         const actionsMsg: ChatMessageType = {
           role: 'assistant',
@@ -171,7 +242,9 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
         setOnChats((prev) => [...prev, actionsMsg])
       }
     } catch {
+      setOnChats((prev) => prev.filter((m) => m !== userMsg))
       setOnAiTyping(false)
+      setError('Failed to send message')
     }
   }, [sessionToken, onChats])
 
@@ -184,25 +257,75 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
   const onBookSlot = async (_dateStr: string, _slotTime: string) => { /* booking handled by manage page */ }
   const onRestartChat = () => { if (currentBot) setOnChats(buildInitialMessages(currentBot)) }
 
+  const sendQuestion = useCallback(async (content: string) => {
+    if (!sessionToken) return
+    const userMsg: ChatMessageType = { role: 'user', content }
+    const updatedChats = [...onChats, userMsg]
+    setOnChats(updatedChats)
+    setOnAiTyping(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/widget/message', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'QUESTION', content }),
+      })
+      setOnAiTyping(false)
+      if (!res.ok) {
+        setOnChats((prev) => prev.filter((m) => m !== userMsg))
+        setError('Failed to send question')
+        return
+      }
+      const data = await res.json()
+      if (!data.ok) {
+        setOnChats((prev) => prev.filter((m) => m !== userMsg))
+        setError('Failed to send question')
+        return
+      }
+      // Append returned messages (visitor question + AI answer)
+      data.messages?.forEach((m: any) => {
+        setOnChats((prev) => [...prev, { id: m.id, role: m.role, content: m.content, createdAt: m.createdAt }])
+      })
+      if (data.flowCompleted) {
+        setStatus('CLOSED')
+      }
+    } catch {
+      setOnChats((prev) => prev.filter((m) => m !== userMsg))
+      setOnAiTyping(false)
+      setError('Failed to send question')
+    }
+  }, [sessionToken, onChats])
+
   const acceptConsent = async () => {
     if (!sessionToken) return
     try {
       const res = await fetch('/api/widget/message', {
         method: 'POST',
         headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'consent' }),
+        body: JSON.stringify({ kind: 'CONSENT', accepted: true }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        setError('Failed to accept consent')
+        return
+      }
       const data = await res.json()
-      if (!data.ok) return
+      if (!data.ok) {
+        setError('Failed to accept consent')
+        return
+      }
       setConsentGiven(true)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('realchat_consent_given', 'true')
+      }
       setStatus('BOT')
       if (data.kind === 'step' && data.step) {
         setOnChats([{ role: 'assistant', content: data.step.prompt }])
       } else {
-        setStatus('CLOSED')
+        setOnChats([])
       }
-    } catch {}
+    } catch {
+      setError('Failed to accept consent')
+    }
   }
 
   const requestHandoff = async () => {
@@ -222,12 +345,17 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
     } catch {}
   }
 
+  const turnstileSiteKey = config?.turnstileSiteKey ?? undefined
+  const flow = config?.flow ?? []
+  const locale = config?.locale ?? 'en'
+
   return {
     botOpened, onOpenChatBot: () => setBotOpened((p) => !p), handleSendMessage,
     onSelectOption, onBookSlot, onRestartChat, onChats, register: null as any, onAiTyping,
     messageWindowRef, currentBot, loading, config, sessionToken, chatRoomId,
     consentGiven, setConsentGiven, requestHandoff, status,
-    acceptConsent, sendMessage, getValues: null as any, errors: null as any,
+    acceptConsent, sendMessage, sendQuestion, getValues: null as any,
+    errors: error, turnstileSiteKey, flow, locale,
   }
 }
 

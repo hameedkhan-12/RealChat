@@ -36,6 +36,7 @@ export const GET = handle(async (req: Request) => {
         handoffEnabled: b?.handoffEnabled ?? true,
       },
       locale: d.defaultLocale,
+      turnstileSiteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? undefined,
       flow: flow.map((s) => ({
         key: s.key,
         type: s.type,
