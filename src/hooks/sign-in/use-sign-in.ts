@@ -28,6 +28,7 @@ export const useSignInForm = () => {
       try {
         setLoading(true)
         const authenticated = await signIn.create({
+          strategy: 'password',
           identifier: values.email,
           password: values.password,
         })

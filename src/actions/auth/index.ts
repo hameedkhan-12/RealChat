@@ -3,22 +3,18 @@
 import { client } from '@/lib/prisma'
 import { currentUser } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/auth'
+import { action } from '@/lib/action'
 import { onGetAllAccountDomains } from '../settings'
 
-export const onCompleteUserRegistration = async (
-  fullname: string,
-  clerkId: string,
-  type: string
-) => {
-  try {
-    const registered = await client.user.create({
-      data: { fullname, clerkId, type },
-      select: { fullname: true, id: true, type: true },
-    })
-    return { status: 200, user: registered }
-  } catch {
-    return { status: 400 }
-  }
+export const onCompleteUserRegistration = async (fullname?: string) => {
+  return action(async () => {
+    const { user } = await requireUser()
+    if (fullname && user.fullname !== fullname) {
+      await client.user.update({ where: { id: user.id }, data: { fullname } })
+    }
+    return { status: 200, user: { fullname: user.fullname, id: user.id, type: user.type } }
+  })
 }
 
 export const onLoginUser = async () => {
