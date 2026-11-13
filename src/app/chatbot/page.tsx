@@ -1,30 +1,25 @@
-import AiChatBot from '@/components/chatbot'
-import React from 'react'
+import type { Metadata } from 'next'
+import ChatWidget from '@/components/chatbot'
 
-const ChatBot = async ({ searchParams }: { searchParams: { [key: string]: string } }) => {
+export const metadata: Metadata = { robots: { index: false, follow: false } }
+
+type SP = Promise<Record<string, string | string[] | undefined>>
+
+export default async function ChatbotPage({ searchParams }: { searchParams: SP }) {
+  const sp = await searchParams
+  const one = (k: string) => (typeof sp[k] === 'string' ? (sp[k] as string) : undefined)
+  const utm: Record<string, string> = {}
+  for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']) {
+    const v = one(k)
+    if (v) utm[k] = v.slice(0, 100)
+  }
+  const lang = one('lang')
   return (
-    <div className="bg-transparent w-full h-full overflow-hidden select-none">
-      <style>{`
-        :root, html, body {
-          background: transparent !important;
-          background-color: transparent !important;
-          color-scheme: light !important;
-          overflow: hidden !important;
-          margin: 0 !important;
-          padding: 0 !important;
-        }
-        .dark {
-          background: transparent !important;
-          background-color: transparent !important;
-        }
-        #__next, main, div[data-nextjs-scroll-focus-boundary] {
-          background: transparent !important;
-          background-color: transparent !important;
-        }
-      `}</style>
-      <AiChatBot publicKey={searchParams.key} />
-    </div>
+    <ChatWidget
+      publicKey={one('key')}
+      pageUrl={one('page')?.slice(0, 500)}
+      utm={utm}
+      lang={lang === 'ar' || lang === 'en' ? lang : undefined}
+    />
   )
 }
-
-export default ChatBot
