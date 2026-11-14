@@ -1,9 +1,10 @@
 'use server'
 
 import { client } from '@/lib/prisma'
-import { requireResourceAccess } from '@/lib/auth'
+import { requireDomainAccess, requireResourceAccess } from '@/lib/auth'
 import { action } from '@/lib/action'
 import { logger } from '@/lib/logger'
+import { getPusherServer, roomChannel } from '@/lib/pusher-server'
 
 export type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -23,6 +24,19 @@ export const onToggleRealtime = async (id: string, state: ChatRoomStatus): Promi
       data,
       select: { id: true, status: true, assignedToUserId: true },
     })
+    // Publish realtime event
+    const pusher = getPusherServer()
+    if (pusher) {
+      try {
+        await pusher.trigger(roomChannel(id), 'room.updated', {
+          roomId: id,
+          status: chatRoom.status,
+          assignedToUserId: chatRoom.assignedToUserId,
+        })
+      } catch {
+        // non-fatal
+      }
+    }
     return {
       ok: true,
       data: {
@@ -45,6 +59,19 @@ export const onCloseConversation = async (id: string): Promise<ActionResult> => 
       data: { status: 'CLOSED', lastActivityAt: new Date(), assignedToUserId: null },
       select: { id: true, status: true },
     })
+    // Publish realtime event
+    const pusher = getPusherServer()
+    if (pusher) {
+      try {
+        await pusher.trigger(roomChannel(id), 'room.updated', {
+          roomId: id,
+          status: 'CLOSED',
+          assignedToUserId: null,
+        })
+      } catch {
+        // non-fatal
+      }
+    }
     return {
       ok: true,
       data: { status: 200, message: 'Conversation closed', chatRoom },
@@ -63,6 +90,19 @@ export const onReturnToBot = async (id: string): Promise<ActionResult> => {
       data: { status: 'BOT', lastActivityAt: new Date(), assignedToUserId: null },
       select: { id: true, status: true },
     })
+    // Publish realtime event
+    const pusher = getPusherServer()
+    if (pusher) {
+      try {
+        await pusher.trigger(roomChannel(id), 'room.updated', {
+          roomId: id,
+          status: 'BOT',
+          assignedToUserId: null,
+        })
+      } catch {
+        // non-fatal
+      }
+    }
     return {
       ok: true,
       data: { status: 200, message: 'Returned to bot', chatRoom },
@@ -87,10 +127,6 @@ export const onGetDomainChatRooms = async (
   domainId: string,
   filter?: 'WAITING_AGENT' | 'LIVE' | 'CLOSED' | 'BOT'
 ) => {
-  await requireResourceAccess('chatRoom', domainId) // domainId here is actually chatRoomId - keep for backwards compat
-  // Actually domainId is used as filter below; requireResourceAccess expects chatRoomId.
-  // Fix: this function takes domainId for filtering. Use requireDomainAccess instead.
-  const { requireDomainAccess } = await import('@/lib/auth')
   await requireDomainAccess(domainId)
   try {
     const domain = await client.domain.findUnique({
@@ -208,20 +244,32 @@ export const onRealTimeChat = async (
 }
 
 export const onOwnerSendMessage = async (
+  domainId: string,
   chatroom: string,
-  message: string,
-  role: 'assistant' | 'user'
+  message: string
 ): Promise<ActionResult> => {
-  await requireResourceAccess('chatRoom', chatroom)
+  const { user } = await requireDomainAccess(domainId, 'AGENT')
   try {
     const created = await client.chatMessage.create({
-      data: { chatRoomId: chatroom, message, senderType: role === 'user' ? 'VISITOR' : 'AGENT' },
+      data: { chatRoomId: chatroom, message, senderType: 'AGENT', senderUserId: user.id },
       select: { id: true, senderType: true, message: true, createdAt: true, seen: true },
     })
+    // Publish realtime event
+    const pusher = getPusherServer()
+    if (pusher) {
+      try {
+        await pusher.trigger(roomChannel(chatroom), 'message.created', {
+          roomId: chatroom,
+          messageId: created.id,
+        })
+      } catch {
+        // non-fatal
+      }
+    }
     return {
       ok: true,
       data: {
-        message: [{ ...created, role: created.senderType === 'VISITOR' ? 'user' : 'assistant' }],
+        message: [{ ...created, role: 'assistant' }],
       },
     }
   } catch (error) {

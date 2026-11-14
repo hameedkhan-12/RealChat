@@ -1,23 +1,22 @@
 import { NextResponse } from 'next/server'
 import { client } from '@/lib/prisma'
-import { hashToken, getBearerToken } from '@/lib/session'
-import { rateLimit } from '@/lib/rate-limit'
+import { handle, HttpError } from '@/lib/http'
+import { rateLimit, getClientIp } from '@/lib/rate-limit'
+import { requireWidgetSession } from '@/lib/widget-auth'
+import { sendMail } from '@/lib/mail'
+import { getPusherServer, roomChannel } from '@/lib/pusher-server'
 
-export const POST = async (req: Request) => {
-  const ip = req.headers.get('x-forwarded-for') || 'unknown'
+export const POST = handle(async (req: Request): Promise<NextResponse> => {
+  const ip = getClientIp(req)
   const rl = await rateLimit(`handoff:${ip}`, 10, 60)
-  if (!rl.success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+  if (!rl.success) throw new HttpError(429, 'RATE_LIMITED')
 
-  const auth = req.headers.get('authorization') || ''
-  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : null
-  if (!token) return NextResponse.json({ error: 'Missing session token' }, { status: 401 })
+  const { room } = await requireWidgetSession(req)
 
-  const tokenHash = hashToken(token)
-  const room = await client.chatRoom.findFirst({
-    where: { sessionTokenHash: tokenHash },
-    include: { domain: true, customer: true },
-  })
-  if (!room) return NextResponse.json({ error: 'Invalid session' }, { status: 403 })
+  // Handoff only allowed from BOT or LIVE state
+  if (room.status === 'CLOSED' || room.status === 'WAITING_AGENT') {
+    throw new HttpError(409, 'ROOM_NOT_CLAIMABLE')
+  }
 
   await client.chatRoom.update({
     where: { id: room.id },
@@ -28,7 +27,6 @@ export const POST = async (req: Request) => {
   const emails = room.domain.notificationEmails ?? []
   if (emails.length && room.customer) {
     try {
-      const { sendMail } = await import('@/lib/mail')
       await sendMail({
         to: emails,
         subject: 'New chat handoff request',
@@ -39,5 +37,18 @@ export const POST = async (req: Request) => {
     }
   }
 
+  // Publish realtime event for agents
+  const pusher = getPusherServer()
+  if (pusher) {
+    try {
+      await pusher.trigger(roomChannel(room.id), 'handoff.requested', {
+        roomId: room.id,
+        status: 'WAITING_AGENT',
+      })
+    } catch {
+      // Pusher failure is non-fatal
+    }
+  }
+
   return NextResponse.json({ ok: true, chatRoomId: room.id, status: 'WAITING_AGENT' })
-}
+})

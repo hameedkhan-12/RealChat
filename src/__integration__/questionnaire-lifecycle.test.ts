@@ -10,13 +10,8 @@ vi.mock('@/lib/prisma', () => ({
     customerResponses: { findUnique: vi.fn(), create: vi.fn() },
     customer: { update: vi.fn() },
     chatBot: { findUnique: vi.fn() },
-    $transaction: vi.fn(async (cb) => cb({
-      chatRoom: { findUnique: vi.fn(), update: vi.fn() },
-      flowStep: { findMany: vi.fn(), findFirst: vi.fn() },
-      customerResponses: { findUnique: vi.fn(), create: vi.fn() },
-      customer: { update: vi.fn() },
-      chatBot: { findUnique: vi.fn() },
-    })),
+    knowledgeItem: { findMany: vi.fn() },
+    $transaction: vi.fn(async (cb) => cb(client)),
   },
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: vi.fn().mockResolvedValue({ success: true }), getClientIp: () => '1.2.3.4' }))
@@ -74,6 +69,7 @@ describe('questionnaire lifecycle', () => {
     ;(client.chatRoom.update as any).mockResolvedValue({})
     ;(client.chatMessage.create as any).mockResolvedValue({ id: 'msg-1' })
     ;(client.chatBot.findUnique as any).mockResolvedValue({ bookingEnabled: true, handoffEnabled: true })
+    ;(client.knowledgeItem.findMany as any).mockResolvedValue([])
   })
 
   it('advances through flow on valid answers', async () => {
@@ -157,6 +153,29 @@ describe('questionnaire lifecycle', () => {
     expect(json.flowCompleted).toBe(false)
     expect(client.customerResponses.create).not.toHaveBeenCalled()
     expect(client.chatRoom.update).toHaveBeenCalled()
+  })
+
+  it('discards AI answer when agent takes over between check and insert (race condition)', async () => {
+    const { POST } = await import('@/app/api/widget/message/route')
+    // Room is BOT per requireWidgetSession
+    setRoom('step3')
+    // Inside transaction, freshRoom check finds LIVE (agent took over)
+    let findUniqueCallCount = 0
+    ;(client.chatRoom.findUnique as any).mockImplementation(async () => {
+      findUniqueCallCount++
+      if (findUniqueCallCount === 1) {
+        return { id: 'room-1', domainId: 'domain-1', status: 'LIVE', assignedToUserId: 'agent-1' }
+      }
+      return { id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null }
+    })
+    const res = await POST(makeReq('QUESTION', { content: 'test question' }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    // AI answer discarded — only visitor message returned
+    expect(json.messages.length).toBe(1)
+    expect(json.messages[0].senderType).toBe('VISITOR')
+    // Room status is LIVE (agent took over)
+    expect(json.room.status).toBe('LIVE')
   })
 
   it('keeps room open after flow completion for AI Q&A and handover', async () => {

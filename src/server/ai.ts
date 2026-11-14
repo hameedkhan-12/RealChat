@@ -32,9 +32,7 @@ export const aiProvider: AIProvider = {
   async answerFromKnowledge(input: GroundedAnswerInput): Promise<GroundedAnswer> {
     const env = getEnv()
     if (!isConfigured()) {
-      logger.info('ai provider not configured, returning fallback', {
-        question: input.question.slice(0, 100),
-      })
+      logger.info('ai provider not configured, returning fallback')
       return {
         answer: `I don't have confirmed information about that. A team member can help you.`,
         shouldEscalate: true,
@@ -79,10 +77,7 @@ ${knowledgeText || '(none available)'}`
       clearTimeout(timer)
 
       if (!res.ok) {
-        logger.error('ai provider returned error', {
-          status: res.status,
-          question: input.question.slice(0, 100),
-        })
+        logger.error('ai provider returned error', { status: res.status })
         return fallbackAnswer()
       }
 
@@ -92,7 +87,6 @@ ${knowledgeText || '(none available)'}`
       if (!parsed.success) {
         logger.error('ai provider output validation failed', {
           error: parsed.error.flatten().fieldErrors,
-          question: input.question.slice(0, 100),
         })
         return fallbackAnswer()
       }
@@ -101,7 +95,6 @@ ${knowledgeText || '(none available)'}`
       clearTimeout(timer)
       logger.error('ai provider call failed', {
         error: e instanceof Error ? e.message : String(e),
-        question: input.question.slice(0, 100),
       })
       return fallbackAnswer()
     }

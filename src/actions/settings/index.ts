@@ -509,28 +509,21 @@ export const onGetFlowSteps = async (domainId: string): Promise<ActionResult> =>
 export const onUpsertFlowStep = async (
   domainId: string,
   stepId: string | null,
-  position: number,
-  key: string,
-  type: string,
-  prompt: string,
-  options: any,
-  required: boolean,
-  mapsTo: string,
-  isActive: boolean
+  input: { position: number; key: string; type: string; prompt: string; options: any; required: boolean; mapsTo: string; isActive: boolean }
 ): Promise<ActionResult> => {
-  await requireDomainAccess(domainId)
+  await requireDomainAccess(domainId, 'OWNER')
   try {
     if (stepId) {
       const step = await client.flowStep.findFirst({ where: { id: stepId, domainId } })
       if (!step) return { ok: false, error: 'FORBIDDEN', status: 403 }
       const updated = await client.flowStep.update({
         where: { id: stepId },
-        data: { position, key, type: type as any, prompt, options, required, mapsTo: mapsTo as any, isActive },
+        data: { position: input.position, key: input.key, type: input.type as any, prompt: input.prompt, options: input.options, required: input.required, mapsTo: input.mapsTo as any, isActive: input.isActive },
       })
       return { ok: true, data: { step: updated } }
     } else {
       const step = await client.flowStep.create({
-        data: { domainId, position, key, type: type as any, prompt, options, required, mapsTo: mapsTo as any, isActive },
+        data: { domainId, position: input.position, key: input.key, type: input.type as any, prompt: input.prompt, options: input.options, required: input.required, mapsTo: input.mapsTo as any, isActive: input.isActive },
       })
       return { ok: true, data: { step } }
     }
@@ -541,7 +534,7 @@ export const onUpsertFlowStep = async (
 }
 
 export const onDeleteFlowStep = async (domainId: string, stepId: string): Promise<ActionResult> => {
-  await requireDomainAccess(domainId)
+  await requireDomainAccess(domainId, 'OWNER')
   try {
     const step = await client.flowStep.findFirst({ where: { id: stepId, domainId } })
     if (!step) return { ok: false, error: 'FORBIDDEN', status: 403 }

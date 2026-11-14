@@ -113,18 +113,16 @@ export function FlowBuilderForm({ domainId }: Props) {
 
   const onSave = async () => {
     const options = form.options.filter((o) => o.label.trim() || o.value.trim())
-    const res = await onUpsertFlowStep(
-      domainId,
-      editing?.id || null,
-      form.position,
-      form.key,
-      form.type,
-      form.prompt,
+    const res = await onUpsertFlowStep(domainId, editing?.id || null, {
+      position: form.position,
+      key: form.key,
+      type: form.type,
+      prompt: form.prompt,
       options,
-      form.required,
-      form.mapsTo,
-      form.isActive
-    )
+      required: form.required,
+      mapsTo: form.mapsTo,
+      isActive: form.isActive,
+    })
     if (res?.ok) {
       setEditing(null)
       setForm({

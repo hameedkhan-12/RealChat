@@ -35,7 +35,7 @@ export const onUpsertKnowledgeItem = async (
   input: { title: string; content: string; category?: string | null; isActive: boolean }
 ): Promise<ActionResult> => {
   return action(async () => {
-    await requireDomainAccess(domainId)
+    await requireDomainAccess(domainId, 'OWNER')
     const parsed = KnowledgeItemInput.parse(input)
     if (itemId) {
       const existing = await client.knowledgeItem.findFirst({ where: { id: itemId, domainId } })
@@ -56,7 +56,7 @@ export const onUpsertKnowledgeItem = async (
 
 export const onDeleteKnowledgeItem = async (domainId: string, itemId: string): Promise<ActionResult> => {
   return action(async () => {
-    await requireDomainAccess(domainId)
+    await requireDomainAccess(domainId, 'OWNER')
     const existing = await client.knowledgeItem.findFirst({ where: { id: itemId, domainId } })
     if (!existing) return { ok: false, error: 'FORBIDDEN', status: 403 }
     await client.knowledgeItem.delete({ where: { id: itemId } })
