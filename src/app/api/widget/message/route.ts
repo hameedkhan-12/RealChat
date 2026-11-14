@@ -39,27 +39,37 @@ export const POST = handle(async (req: Request): Promise<Response> => {
     case 'FLOW_ANSWER': {
       if (room.status !== 'BOT') throw new HttpError(403, 'NOT_IN_BOT_MODE')
       if (!room.consentAt) throw new HttpError(403, 'CONSENT_REQUIRED')
+      // Stale submission guard: client stepKey must match server-owned currentStepKey
+      if (room.currentStepKey && input.stepKey !== room.currentStepKey) {
+        throw new HttpError(409, 'STALE_SUBMISSION')
+      }
       const result = await advanceFlow(room.domainId, room.currentStepKey, input.answer)
       if (result.kind === 'step') {
         const currentStep = await client.flowStep.findFirst({
           where: { domainId: room.domainId, key: room.currentStepKey ?? result.step.key },
         })
         if (currentStep && room.customer) {
-          await client.customerResponses.create({
-            data: {
-              customerId: room.customer.id,
-              stepKey: currentStep.key,
-              question: currentStep.prompt,
-              answered: input.answer == null ? null : Array.isArray(input.answer) ? input.answer.join(', ') : String(input.answer),
-            },
+          // Idempotent: skip if response already exists for this customer+step
+          const existing = await client.customerResponses.findUnique({
+            where: { customerId_stepKey: { customerId: room.customer.id, stepKey: currentStep.key } },
           })
-          if (currentStep.mapsTo !== 'NONE' && input.answer != null) {
-            const updateData: Record<string, string> = {}
-            const val = Array.isArray(input.answer) ? input.answer.join(', ') : String(input.answer)
-            if (currentStep.mapsTo === 'NAME') updateData.name = val
-            if (currentStep.mapsTo === 'EMAIL') updateData.email = val
-            if (currentStep.mapsTo === 'PHONE') updateData.phone = val
-            await client.customer.update({ where: { id: room.customer.id }, data: updateData })
+          if (!existing) {
+            await client.customerResponses.create({
+              data: {
+                customerId: room.customer.id,
+                stepKey: currentStep.key,
+                question: currentStep.prompt,
+                answered: input.answer == null ? null : Array.isArray(input.answer) ? input.answer.join(', ') : String(input.answer),
+              },
+            })
+            if (currentStep.mapsTo !== 'NONE' && input.answer != null) {
+              const updateData: Record<string, string> = {}
+              const val = Array.isArray(input.answer) ? input.answer.join(', ') : String(input.answer)
+              if (currentStep.mapsTo === 'NAME') updateData.name = val
+              if (currentStep.mapsTo === 'EMAIL') updateData.email = val
+              if (currentStep.mapsTo === 'PHONE') updateData.phone = val
+              await client.customer.update({ where: { id: room.customer.id }, data: updateData })
+            }
           }
         }
         await client.chatRoom.update({
