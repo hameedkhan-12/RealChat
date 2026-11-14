@@ -16,6 +16,10 @@ vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () =
 vi.mock('@/lib/auth', () => ({
   requireDomainAccess: vi.fn(() => Promise.resolve({ user: { id: 'agent-1' } })),
 }))
+vi.mock('@/lib/pusher-server', () => ({
+  getPusherServer: vi.fn(() => null),
+  roomChannel: vi.fn(() => 'private-room-room-1'),
+}))
 vi.mock('@/lib/http', () => ({
   handle: (fn: any) => async (req: Request) => {
     try { return await fn(req) } catch (e: any) { return new Response(JSON.stringify({ ok: false, error: e.code }), { status: e.status ?? 500 }) }
@@ -38,7 +42,7 @@ describe('two-agent concurrency', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockRateLimit.mockResolvedValue({ success: true })
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', assignedToUserId: null })
+    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'WAITING_AGENT', assignedToUserId: null })
   })
 
   it('only one agent can claim a room (atomic claim)', async () => {
@@ -56,7 +60,7 @@ describe('two-agent concurrency', () => {
     expect(json2.error).toBe('ROOM_NOT_CLAIMABLE')
   })
 
-  it('atomic claim uses conditional update (status + unassigned)', async () => {
+  it('atomic claim uses conditional update (WAITING_AGENT + unassigned)', async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 })
     const { POST } = await import('@/app/api/agent/takeover/route')
     await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
@@ -64,7 +68,7 @@ describe('two-agent concurrency', () => {
       where: {
         id: 'room-1',
         domainId: 'domain-1',
-        status: { in: ['BOT', 'WAITING_AGENT'] },
+        status: 'WAITING_AGENT',
         assignedToUserId: null,
       },
       data: expect.objectContaining({ status: 'LIVE', assignedToUserId: 'agent-1' }),
@@ -79,7 +83,15 @@ describe('two-agent concurrency', () => {
     expect(res.status).toBe(409)
   })
 
-  it('rate limits agent takeover attempts', async () => {
+  it('rejects claiming a BOT room (not WAITING_AGENT)', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 })
+    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', assignedToUserId: null })
+    const { POST } = await import('@/app/api/agent/takeover/route')
+    const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
+    expect(res.status).toBe(409)
+  })
+
+  it('rejects rate limited requests', async () => {
     mockRateLimit.mockResolvedValue({ success: false })
     const { POST } = await import('@/app/api/agent/takeover/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))

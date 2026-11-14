@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const mockUpdateMany = vi.fn()
 const mockFindUnique = vi.fn()
-const mockUpdate = vi.fn()
 const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
 
 vi.mock('@/lib/prisma', () => ({
@@ -10,13 +9,16 @@ vi.mock('@/lib/prisma', () => ({
     chatRoom: {
       updateMany: mockUpdateMany,
       findUnique: mockFindUnique,
-      update: mockUpdate,
     },
   },
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () => '1.2.3.4' }))
 vi.mock('@/lib/auth', () => ({
   requireDomainAccess: vi.fn(() => Promise.resolve({ user: { id: 'agent-1' } })),
+}))
+vi.mock('@/lib/pusher-server', () => ({
+  getPusherServer: vi.fn(() => null),
+  roomChannel: vi.fn(() => 'private-room-room-1'),
 }))
 vi.mock('@/lib/http', () => ({
   handle: (fn: any) => async (req: Request) => {
@@ -44,17 +46,17 @@ describe('agent takeover', () => {
     mockFindUnique.mockResolvedValue({ id: 'room-1', status: 'LIVE', assignedToUserId: 'agent-1' })
   })
 
-  it('atomically claims an unassigned BOT room', async () => {
+  it('atomically claims an unassigned WAITING_AGENT room', async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 })
     const { POST } = await import('@/app/api/agent/takeover/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
     expect(res.status).toBe(200)
-    // updateMany called with domainId + status filter + unassigned check
+    // updateMany called with domainId + WAITING_AGENT filter + unassigned check
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: {
         id: 'room-1',
         domainId: 'domain-1',
-        status: { in: ['BOT', 'WAITING_AGENT'] },
+        status: 'WAITING_AGENT',
         assignedToUserId: null,
       },
       data: expect.objectContaining({ status: 'LIVE', assignedToUserId: 'agent-1' }),

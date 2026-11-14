@@ -13,8 +13,12 @@ export const POST = handle(async (req: Request): Promise<NextResponse> => {
 
   const { room } = await requireWidgetSession(req)
 
-  // Handoff only allowed from BOT or LIVE state
-  if (room.status === 'CLOSED' || room.status === 'WAITING_AGENT') {
+  // Handoff only allowed from BOT state (including after questionnaire completion)
+  if (room.status === 'WAITING_AGENT') {
+    // Already waiting - idempotent, return current state
+    return NextResponse.json({ ok: true, chatRoomId: room.id, status: 'WAITING_AGENT' })
+  }
+  if (room.status === 'CLOSED' || room.status === 'LIVE') {
     throw new HttpError(409, 'ROOM_NOT_CLAIMABLE')
   }
 

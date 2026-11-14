@@ -149,42 +149,35 @@ export const POST = handle(async (req: Request): Promise<Response> => {
         aiEscalate = true
       }
 
-      // Atomically insert AI response only if room is still BOT (agent hasn't taken over)
-      const result = await client.$transaction(async (tx) => {
-        const freshRoom = await tx.chatRoom.findUnique({
-          where: { id: room.id },
-          select: { id: true, status: true },
-        })
-        if (!freshRoom || freshRoom.status !== 'BOT') {
-          return { discarded: true, status: freshRoom?.status ?? room.status }
-        }
-        const aiMsg = await tx.chatMessage.create({
-          data: {
-            chatRoomId: room.id,
-            message: aiAnswer,
-            senderType: 'BOT',
-            kind: 'AI_ANSWER',
-            metadata: { knowledgeIds: usedKnowledgeIds, escalate: aiEscalate },
-          },
-        })
-        await tx.chatRoom.update({
-          where: { id: room.id },
-          data: { lastActivityAt: new Date() },
-        })
-        return { discarded: false, aiMsg }
+      // Atomically claim the room for AI response only if still BOT
+      // updateMany with WHERE status='BOT' is atomic at DB level - PostgreSQL locks the row
+      const claim = await client.chatRoom.updateMany({
+        where: { id: room.id, status: 'BOT' },
+        data: { lastActivityAt: new Date() },
       })
-
-      if (result.discarded) {
+      if (claim.count === 0) {
+        // Room is no longer BOT (agent took over or room closed)
+        const freshRoom = await client.chatRoom.findUnique({
+          where: { id: room.id },
+          select: { status: true },
+        })
         return NextResponse.json({
           ok: true,
-          room: { status: result.status },
+          room: { status: freshRoom?.status ?? room.status },
           messages: [{ id: visitorMsg.id, senderType: 'VISITOR', content: input.content }],
           currentStep: null,
           flowCompleted: false,
         })
       }
-
-      const aiMsg = result.aiMsg!
+      const aiMsg = await client.chatMessage.create({
+        data: {
+          chatRoomId: room.id,
+          message: aiAnswer,
+          senderType: 'BOT',
+          kind: 'AI_ANSWER',
+          metadata: { knowledgeIds: usedKnowledgeIds, escalate: aiEscalate },
+        },
+      })
       await publishMessageEvent(room.id, aiMsg.id)
 
       return NextResponse.json({

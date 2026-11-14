@@ -250,6 +250,23 @@ export const onOwnerSendMessage = async (
 ): Promise<ActionResult> => {
   const { user } = await requireDomainAccess(domainId, 'AGENT')
   try {
+    // Verify the room belongs to this domain and is LIVE
+    const room = await client.chatRoom.findUnique({
+      where: { id: chatroom },
+      select: { id: true, domainId: true, status: true, assignedToUserId: true },
+    })
+    if (!room || room.domainId !== domainId) {
+      return { ok: false, error: 'FORBIDDEN', status: 403 }
+    }
+    // Only allow messaging in LIVE conversations
+    if (room.status !== 'LIVE') {
+      return { ok: false, error: 'ROOM_NOT_ACTIVE', status: 409 }
+    }
+    // Only the assigned agent can send messages
+    if (!room.assignedToUserId || room.assignedToUserId !== user.id) {
+      return { ok: false, error: 'FORBIDDEN', status: 403 }
+    }
+    // Sender type is ALWAYS AGENT - never trust client-supplied role
     const created = await client.chatMessage.create({
       data: { chatRoomId: chatroom, message, senderType: 'AGENT', senderUserId: user.id },
       select: { id: true, senderType: true, message: true, createdAt: true, seen: true },

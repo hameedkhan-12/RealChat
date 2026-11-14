@@ -4,7 +4,7 @@ import { requireWidgetSession } from '@/lib/widget-auth'
 
 vi.mock('@/lib/prisma', () => ({
   client: {
-    chatRoom: { findUnique: vi.fn(), update: vi.fn() },
+    chatRoom: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     chatMessage: { create: vi.fn(), findMany: vi.fn() },
     flowStep: { findMany: vi.fn(), findFirst: vi.fn() },
     customerResponses: { findUnique: vi.fn(), create: vi.fn() },
@@ -168,6 +168,22 @@ describe('questionnaire lifecycle', () => {
       }
       return { id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null }
     })
+    const res = await POST(makeReq('QUESTION', { content: 'test question' }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    // AI answer discarded — only visitor message returned
+    expect(json.messages.length).toBe(1)
+    expect(json.messages[0].senderType).toBe('VISITOR')
+    // Room status is LIVE (agent took over)
+    expect(json.room.status).toBe('LIVE')
+  })
+
+  it('discards AI answer when agent takes over between check and insert (race condition)', async () => {
+    const { POST } = await import('@/app/api/widget/message/route')
+    setRoom('step3')
+    // updateMany returns count 0 because room is no longer BOT (agent took over)
+    ;(client.chatRoom.updateMany as any).mockResolvedValueOnce({ count: 0 })
+    ;(client.chatRoom.findUnique as any).mockResolvedValueOnce({ id: 'room-1', domainId: 'domain-1', status: 'LIVE', assignedToUserId: 'agent-1' })
     const res = await POST(makeReq('QUESTION', { content: 'test question' }))
     expect(res.status).toBe(200)
     const json = await res.json()
