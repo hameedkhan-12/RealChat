@@ -9,6 +9,9 @@ export const GET = handle(async (req: Request) => {
   const rl = await rateLimit(`msgs:room:${room.id}`, 60, 60)
   if (!rl.success) throw new HttpError(429, 'RATE_LIMITED')
 
+  // Closed conversations cannot receive new messages or be fetched
+  if (room.status === 'CLOSED') throw new HttpError(409, 'ROOM_CLOSED')
+
   const messages = await client.chatMessage.findMany({
     where: { chatRoomId: room.id },
     orderBy: { createdAt: 'asc' },

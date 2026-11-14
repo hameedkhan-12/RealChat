@@ -5,7 +5,7 @@ import { requireWidgetSession } from '@/lib/widget-auth'
 vi.mock('@/lib/prisma', () => ({
   client: {
     chatRoom: { findUnique: vi.fn(), update: vi.fn() },
-    chatMessage: { create: vi.fn() },
+    chatMessage: { create: vi.fn(), findMany: vi.fn() },
     flowStep: { findMany: vi.fn(), findFirst: vi.fn() },
     customerResponses: { findUnique: vi.fn(), create: vi.fn() },
     customer: { update: vi.fn() },
@@ -193,5 +193,14 @@ describe('questionnaire lifecycle', () => {
     const json = await res.json()
     expect(json.flowCompleted).toBe(true)
     expect(json.room.status).toBe('BOT')
+  })
+
+  it('rejects fetching messages for a closed conversation', async () => {
+    const { GET } = await import('@/app/api/widget/messages/route')
+    setRoom(null, new Date(), 'CLOSED')
+    const res = await GET(new Request('http://localhost/api/widget/messages'))
+    expect(res.status).toBe(409)
+    const json = await res.json()
+    expect(json.error).toBe('ROOM_CLOSED')
   })
 })
