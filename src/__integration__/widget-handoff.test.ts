@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { requireWidgetSession } from '@/lib/widget-auth'
 
 const mockUpdate = vi.fn()
 const mockFindUnique = vi.fn()
-const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
+const mockRateLimit = vi.fn()
 
 vi.mock('@/lib/prisma', () => ({
   client: {
@@ -11,7 +12,7 @@ vi.mock('@/lib/prisma', () => ({
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () => '1.2.3.4' }))
 vi.mock('@/lib/widget-auth', () => ({
-  requireWidgetSession: vi.fn(() => Promise.resolve({ room: { id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null } })),
+  requireWidgetSession: vi.fn(() => Promise.resolve({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'BOT', consentAt: new Date(), currentStepKey: null } })),
 }))
 vi.mock('@/lib/http', () => ({
   handle: (fn: any) => async (req: Request) => {
@@ -35,8 +36,13 @@ function makeReq() {
   })
 }
 
+function setRoom(currentStepKey: string | null, consentAt = new Date(), status: string = 'BOT') {
+  vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status, consentAt, currentStepKey } } as any)
+}
+
 describe('widget handoff', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     mockRateLimit.mockResolvedValue({ success: true })
     mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null })
     mockUpdate.mockResolvedValue({})
@@ -56,7 +62,8 @@ describe('widget handoff', () => {
   })
 
   it('is idempotent: repeated handoff on already WAITING_AGENT room returns current state', async () => {
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'WAITING_AGENT', consentAt: new Date(), currentStepKey: null })
+    mockUpdate.mockClear()
+    vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'WAITING_AGENT', consentAt: new Date(), currentStepKey: null } } as any)
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res1 = await POST(makeReq())
     expect(res1.status).toBe(200)
@@ -75,14 +82,14 @@ describe('widget handoff', () => {
   })
 
   it('rejects handoff from CLOSED room', async () => {
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'CLOSED', consentAt: new Date(), currentStepKey: null })
+    vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'CLOSED', consentAt: new Date(), currentStepKey: null } } as any)
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res = await POST(makeReq())
     expect(res.status).toBe(409)
   })
 
   it('rejects handoff from LIVE room', async () => {
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'LIVE', consentAt: new Date(), currentStepKey: null })
+    vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'LIVE', consentAt: new Date(), currentStepKey: null } } as any)
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res = await POST(makeReq())
     expect(res.status).toBe(409)

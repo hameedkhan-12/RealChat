@@ -16,7 +16,7 @@ vi.mock('@/lib/prisma', () => ({
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: vi.fn().mockResolvedValue({ success: true }), getClientIp: () => '1.2.3.4' }))
 vi.mock('@/lib/widget-auth', () => ({
-  requireWidgetSession: vi.fn(() => Promise.resolve({ room: { id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null } })),
+  requireWidgetSession: vi.fn(() => Promise.resolve({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'BOT', consentAt: new Date(), currentStepKey: null } })),
 }))
 vi.mock('@/lib/pusher-server', () => ({
   getPusherServer: vi.fn(() => null),
@@ -159,7 +159,7 @@ describe('questionnaire lifecycle', () => {
     const { POST } = await import('@/app/api/widget/message/route')
     // Room is BOT per requireWidgetSession
     setRoom('step3')
-    // Inside transaction, freshRoom check finds LIVE (agent took over)
+    // But inside transaction, freshRoom check finds LIVE (agent took over)
     let findUniqueCallCount = 0
     ;(client.chatRoom.findUnique as any).mockImplementation(async () => {
       findUniqueCallCount++
@@ -168,6 +168,7 @@ describe('questionnaire lifecycle', () => {
       }
       return { id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null }
     })
+    ;(client.chatRoom.updateMany as any).mockResolvedValueOnce({ count: 0 })
     const res = await POST(makeReq('QUESTION', { content: 'test question' }))
     expect(res.status).toBe(200)
     const json = await res.json()
