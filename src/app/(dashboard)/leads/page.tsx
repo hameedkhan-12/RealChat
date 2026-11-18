@@ -4,23 +4,30 @@ import { onGetLeads, onDeleteLead, onExportLeadsCSV } from '@/actions/settings'
 import InfoBar from '@/components/infobar'
 import React, { useEffect, useState } from 'react'
 
-const LeadsPage = async () => {
+const LeadsPage = async ({
+  searchParams,
+}: {
+  searchParams: Promise<{ domain?: string }>
+}) => {
+  const sp = await searchParams
+  const domainId = typeof sp.domain === 'string' ? sp.domain : ''
   const [leads, setLeads] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!domainId) return
     setLoading(true)
-    onGetLeads('current-domain')
+    onGetLeads(domainId)
       .then((res) => {
         if (res?.ok) setLeads((res.data as any).leads || [])
       })
       .finally(() => setLoading(false))
-  }, [])
+  }, [domainId])
 
   const onDelete = async (id: string) => {
     setDeleting(id)
-    const res = await onDeleteLead('current-domain', id)
+    const res = await onDeleteLead(domainId, id)
     if (res?.ok) {
       setLeads(prev => prev.filter(l => l.id !== id))
     }
@@ -28,7 +35,7 @@ const LeadsPage = async () => {
   }
 
   const onExport = async () => {
-    const res = await onExportLeadsCSV('current-domain')
+    const res = await onExportLeadsCSV(domainId)
     if (res?.ok) {
       const csv = (res.data as any).csv
       const blob = new Blob([csv], { type: 'text/csv' })

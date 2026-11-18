@@ -1,27 +1,9 @@
 import { onGetAllAccountDomains } from '@/actions/settings'
 import { onGetDomainChatRooms, onGetCustomerAnswers, onCloseConversation, onReturnToBot } from '@/actions/conversation'
+import { ChatRoomItem } from '@/actions/conversation'
 import InfoBar from '@/components/infobar'
 import { Separator } from '@/components/ui/separator'
 import { DomainSelector } from './domain-selector'
-
-type ChatRoomItem = {
-  id: string
-  status: string
-  createdAt: Date
-  lastActivityAt: Date | null
-  consentAt: Date | null
-  assignedToUserId: string | null
-  assignedTo: string | undefined
-  message: { message: string; createdAt: Date; seen: boolean }[]
-}
-
-type CustomerItem = {
-  id: string
-  email: string | null
-  name: string | null
-  phone: string | null
-  chatRoom: ChatRoomItem[]
-}
 
 const STATUS_LABELS: Record<string, string> = {
   BOT: 'Bot',
@@ -40,24 +22,25 @@ const STATUS_COLORS: Record<string, string> = {
 export default async function ConversationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ domain?: string; room?: string }>
+  searchParams: Promise<{ domain?: string; room?: string; cursor?: string }>
 }) {
   const sp = await searchParams
   const domainId = typeof sp.domain === 'string' ? sp.domain : ''
   const selectedRoomId = typeof sp.room === 'string' ? sp.room : ''
+  const cursor = typeof sp.cursor === 'string' ? sp.cursor : undefined
 
   const account = await onGetAllAccountDomains()
   const domains = account?.domains ?? []
 
-  let customers: CustomerItem[] = []
+  let rooms: ChatRoomItem[] = []
+  let nextCursor: string | null = null
   if (domainId) {
-    const data = await onGetDomainChatRooms(domainId)
-    customers = (data?.customer ?? []) as CustomerItem[]
+    const data = await onGetDomainChatRooms(domainId, undefined, cursor, 20)
+    if (data?.ok && data.data) {
+      rooms = data.data.items
+      nextCursor = data.data.nextCursor
+    }
   }
-
-  const rooms = customers.flatMap((c) =>
-    c.chatRoom.map((r) => ({ ...r, customerEmail: c.email, customerName: c.name, customerPhone: c.phone, customerId: c.id }))
-  )
 
   const waitingCount = rooms.filter((r) => r.status === 'WAITING_AGENT').length
   const liveCount = rooms.filter((r) => r.status === 'LIVE').length
@@ -65,7 +48,7 @@ export default async function ConversationsPage({
   const selectedRoom = rooms.find((r) => r.id === selectedRoomId)
   let customerAnswers: any = null
   if (selectedRoom) {
-    const res = await onGetCustomerAnswers(selectedRoom.customerId)
+    const res = await onGetCustomerAnswers(selectedRoom?.customer.id)
     if (res?.ok) customerAnswers = res.data
   }
 
@@ -108,16 +91,30 @@ export default async function ConversationsPage({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className={`text-xs font-bold uppercase ${STATUS_COLORS[r.status]}`}>{STATUS_LABELS[r.status]}</span>
-                        {r.assignedToUserId && <span className="text-[10px] text-muted-foreground">• {r.assignedTo}</span>}
+                        {r.assignedToUserId && <span className="text-[10px] text-muted-foreground">• {r.assignedToUserId}</span>}
                       </div>
-                      <div className="text-sm font-medium truncate">{r.customerName || r.customerEmail || 'Unknown'}</div>
-                      <div className="text-xs text-muted-foreground truncate">{r.message?.[0]?.message || 'No messages'}</div>
+                      <div className="text-sm font-medium truncate">{r.customer.name || r.customer.email || 'Unknown'}</div>
+                      <div className="text-xs text-muted-foreground truncate">{r.latestMessage || 'No messages'}</div>
                       <div className="text-[10px] text-muted-foreground mt-1">{new Date(r.lastActivityAt || r.createdAt).toLocaleString()}</div>
                     </div>
                   </a>
                 ))
               )}
             </div>
+            {nextCursor && (
+              <div className="p-2">
+                <button
+                  onClick={() => {
+                    const url = new URL(window.location.href)
+                    url.searchParams.set('cursor', nextCursor)
+                    window.location.href = url.toString()
+                  }}
+                  className="w-full px-4 py-2 text-sm border rounded hover:bg-muted"
+                >
+                  Load more
+                </button>
+              </div>
+            )}
           </div>
 
           <Separator orientation="vertical" className="h-full" />
@@ -131,8 +128,8 @@ export default async function ConversationsPage({
               <div className="flex flex-col h-full">
                 <div className="px-4 py-3 border-b flex items-center justify-between">
                   <div>
-                    <h2 className="text-sm font-bold">{selectedRoom?.customerName || 'Conversation'}</h2>
-                    <p className="text-xs text-muted-foreground">{selectedRoom?.customerEmail || ''}</p>
+                    <h2 className="text-sm font-bold">{selectedRoom?.customer.name || 'Conversation'}</h2>
+                    <p className="text-xs text-muted-foreground">{selectedRoom?.customer.email || ''}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {selectedRoom && selectedRoom.status === 'LIVE' && (
@@ -154,11 +151,9 @@ export default async function ConversationsPage({
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {selectedRoom?.message.map((m: any) => (
-                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[80%] p-3 rounded-lg ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-muted text-muted-foreground'}`}>{m.message}</div>
-                    </div>
-                  ))}
+                  <p className="text-sm text-muted-foreground text-center py-10">
+                    Messages are displayed in the conversation view. Select a conversation to see its transcript.
+                  </p>
                 </div>
               </div>
             )}

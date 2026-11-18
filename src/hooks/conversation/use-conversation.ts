@@ -37,7 +37,7 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
       setValue('domain', firstDomainId)
       setLoading(true)
       onGetDomainChatRooms(firstDomainId, filter)
-        .then((rooms) => { if (rooms) setChatRooms(rooms.customer) })
+        .then((res) => { if (res?.ok) setChatRooms(res.data.items) })
         .finally(() => setLoading(false))
     }
   }, [domains, filter])
@@ -48,7 +48,7 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
       setLoading(true)
       try {
         const rooms = await onGetDomainChatRooms(value.domain, filter)
-        if (rooms) setChatRooms(rooms.customer)
+        if (rooms?.ok) setChatRooms(rooms.data.items)
       } finally {
         setLoading(false)
       }
@@ -61,7 +61,7 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
     if (domains && domains.length > 0) {
       setLoading(true)
       onGetDomainChatRooms(domains[0]!.id, f)
-        .then((rooms) => { if (rooms) setChatRooms(rooms.customer) })
+        .then((res) => { if (res?.ok) setChatRooms(res.data.items) })
         .finally(() => setLoading(false))
     }
   }

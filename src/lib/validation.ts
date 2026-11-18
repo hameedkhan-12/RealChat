@@ -54,6 +54,26 @@ export const ManageCancelBody = z.object({
   token: z.string().min(32).max(128),
 })
 
+export const FlowStepTypeSchema = z.enum(['CHOICE', 'MULTI_CHOICE', 'TEXT', 'NUMBER', 'EMAIL', 'PHONE'])
+export const FlowStepMapsToSchema = z.enum(['NONE', 'NAME', 'EMAIL', 'PHONE'])
+
+export const FlowStepOptionSchema = z.object({
+  label: z.string().trim().min(1).max(200),
+  value: z.string().trim().min(1).max(200),
+  nextStepKey: z.string().trim().min(1).max(60).optional(),
+})
+
+export const FlowStepUpsertSchema = z.object({
+  position: z.number().int().min(1).max(1000),
+  key: z.string().trim().min(1).max(60),
+  type: FlowStepTypeSchema,
+  prompt: z.string().trim().min(1).max(2000),
+  options: z.array(FlowStepOptionSchema).max(50),
+  required: z.boolean(),
+  mapsTo: FlowStepMapsToSchema,
+  isActive: z.boolean(),
+})
+
 export const isHexColor = (v?: string | null) => !v || /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)
 export const isHttpsUrl = (v?: string | null) => {
   if (!v) return true

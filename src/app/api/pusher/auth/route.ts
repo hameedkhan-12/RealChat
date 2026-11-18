@@ -60,6 +60,8 @@ export const POST = handle(async (req: Request) => {
           where: { domainId_userId: { domainId: room.domainId, userId: user.id } },
         })
         if (!membership) throw new HttpError(403, 'FORBIDDEN_CHANNEL')
+      } else {
+        throw new HttpError(403, 'FORBIDDEN_CHANNEL')
       }
     }
   } else if (token) {

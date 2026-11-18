@@ -123,68 +123,101 @@ export const onGetConversationMode = async (id: string) => {
   }
 }
 
+export type ChatRoomItem = {
+  id: string
+  status: string
+  createdAt: Date
+  lastActivityAt: Date | null
+  consentAt: Date | null
+  flowCompletedAt: Date | null
+  pageUrl: string | null
+  customer: {
+    id: string
+    email: string | null
+    name: string | null
+    phone: string | null
+  }
+  assignedToUserId: string | null
+  latestMessage: string | null
+}
+
 export const onGetDomainChatRooms = async (
   domainId: string,
-  filter?: 'WAITING_AGENT' | 'LIVE' | 'CLOSED' | 'BOT'
-) => {
+  filter?: 'WAITING_AGENT' | 'LIVE' | 'CLOSED' | 'BOT',
+  cursor?: string,
+  limit = 20
+): Promise<ActionResult<{ items: ChatRoomItem[]; nextCursor: string | null }>> => {
   await requireDomainAccess(domainId)
+
+  const parsedLimit = Math.min(Math.max(limit, 1), 50)
+
+  const where: any = { domainId }
+  if (filter) where.status = filter
+
+  // Cursor-based pagination: (lastActivityAt, id)
+  if (cursor) {
+    const [lastActivityAt, id] = cursor.split('|')
+    where.lastActivityAt = { lte: new Date(lastActivityAt) }
+    where.id = { gt: id }
+  }
+
   try {
-    const domain = await client.domain.findUnique({
-      where: { id: domainId },
+    const rooms = await client.chatRoom.findMany({
+      where,
+      orderBy: [{ lastActivityAt: 'desc' }, { id: 'asc' }],
+      take: parsedLimit + 1,
       select: {
         id: true,
-        name: true,
-        customers: {
+        status: true,
+        createdAt: true,
+        lastActivityAt: true,
+        consentAt: true,
+        flowCompletedAt: true,
+        pageUrl: true,
+        assignedToUserId: true,
+        customer: {
           select: {
             id: true,
             email: true,
             name: true,
             phone: true,
-            chatRooms: {
-              where: filter ? { status: filter } : {},
-              select: {
-                id: true,
-                status: true,
-                createdAt: true,
-                lastActivityAt: true,
-                consentAt: true,
-                assignedToUserId: true,
-                messages: {
-                  select: { message: true, createdAt: true, seen: true },
-                  orderBy: { createdAt: 'desc' },
-                  take: 1,
-                },
-                assignedTo: { select: { fullname: true, clerkId: true } },
-              },
-              orderBy: { lastActivityAt: 'desc' },
-            },
           },
+        },
+        messages: {
+          select: { id: true, senderType: true, message: true, createdAt: true, seen: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
         },
       },
     })
-    if (!domain) return null
+
+    const hasMore = rooms.length > parsedLimit
+    const items = hasMore ? rooms.slice(0, parsedLimit) : rooms
+    const nextCursor = hasMore
+      ? `${items[parsedLimit - 1].lastActivityAt.toISOString()}|${items[parsedLimit - 1].id}`
+      : null
+
     return {
-      domainId: domain.id,
-      domainName: domain.name,
-      customer: domain.customers.map((c) => ({
-        id: c.id,
-        email: c.email,
-        name: c.name,
-        phone: c.phone,
-        chatRoom: c.chatRooms.map((r) => ({
+      ok: true,
+      data: {
+        items: rooms.map((r) => ({
           id: r.id,
           status: r.status,
           createdAt: r.createdAt,
           lastActivityAt: r.lastActivityAt,
           consentAt: r.consentAt,
+          flowCompletedAt: r.flowCompletedAt,
+          pageUrl: r.pageUrl,
+          customer: r.customer,
           assignedToUserId: r.assignedToUserId,
-          assignedTo: r.assignedTo?.fullname || r.assignedTo?.clerkId,
-          message: r.messages,
+          latestMessage: r.messages[0]?.message || null,
         })),
-      })),
+        nextCursor,
+      },
     }
   } catch (error) {
     logger.error('onGetDomainChatRooms failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to load conversations', status: 500 }
   }
 }
 

@@ -5,8 +5,9 @@ import { clerkClient, currentUser } from '@clerk/nextjs/server'
 import { requireDomainAccess } from '@/lib/auth'
 import { action } from '@/lib/action'
 import { logger } from '@/lib/logger'
+import { z } from 'zod'
 import { csvRow } from '@/lib/csv'
-import { EmailSchema } from '@/lib/validation'
+import { EmailSchema, FlowStepUpsertSchema } from '@/lib/validation'
 import { hashToken } from '@/lib/session'
 import crypto from 'crypto'
 
@@ -509,21 +510,31 @@ export const onGetFlowSteps = async (domainId: string): Promise<ActionResult> =>
 export const onUpsertFlowStep = async (
   domainId: string,
   stepId: string | null,
-  input: { position: number; key: string; type: string; prompt: string; options: any; required: boolean; mapsTo: string; isActive: boolean }
+  input: z.infer<typeof FlowStepUpsertSchema>
 ): Promise<ActionResult> => {
   await requireDomainAccess(domainId, 'OWNER')
+  const parsed = FlowStepUpsertSchema.parse(input)
   try {
     if (stepId) {
       const step = await client.flowStep.findFirst({ where: { id: stepId, domainId } })
       if (!step) return { ok: false, error: 'FORBIDDEN', status: 403 }
       const updated = await client.flowStep.update({
         where: { id: stepId },
-        data: { position: input.position, key: input.key, type: input.type as any, prompt: input.prompt, options: input.options, required: input.required, mapsTo: input.mapsTo as any, isActive: input.isActive },
+        data: {
+          position: parsed.position,
+          key: parsed.key,
+          type: parsed.type,
+          prompt: parsed.prompt,
+          options: parsed.options,
+          required: parsed.required,
+          mapsTo: parsed.mapsTo,
+          isActive: parsed.isActive,
+        },
       })
       return { ok: true, data: { step: updated } }
     } else {
       const step = await client.flowStep.create({
-        data: { domainId, position: input.position, key: input.key, type: input.type as any, prompt: input.prompt, options: input.options, required: input.required, mapsTo: input.mapsTo as any, isActive: input.isActive },
+        data: { domainId, position: parsed.position, key: parsed.key, type: parsed.type, prompt: parsed.prompt, options: parsed.options, required: parsed.required, mapsTo: parsed.mapsTo, isActive: parsed.isActive },
       })
       return { ok: true, data: { step } }
     }

@@ -1,7 +1,12 @@
 'use client'
 
 import { onGetFlowSteps, onUpsertFlowStep, onDeleteFlowStep } from '@/actions/settings'
+import { FlowStepTypeSchema, FlowStepMapsToSchema } from '@/lib/validation'
 import React, { useEffect, useState } from 'react'
+import { z } from 'zod'
+
+type FlowStepType = z.infer<typeof FlowStepTypeSchema>
+type FlowStepMapsTo = z.infer<typeof FlowStepMapsToSchema>
 
 const TYPE_LABELS: Record<string, string> = {
   CHOICE: 'Choice',
@@ -31,12 +36,12 @@ export function FlowBuilderForm({ domainId }: Props) {
   const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState<{
     key: string
-    type: string
+    type: FlowStepType
     prompt: string
     options: Option[]
     position: number
     required: boolean
-    mapsTo: string
+    mapsTo: FlowStepMapsTo
     isActive: boolean
   }>({
     key: '',
@@ -227,7 +232,7 @@ export function FlowBuilderForm({ domainId }: Props) {
                 <label className="text-xs font-bold text-muted-foreground">Type</label>
                 <select
                   value={form.type}
-                  onChange={(e) => setForm({ ...form, type: e.target.value })}
+                  onChange={(e) => setForm({ ...form, type: e.target.value as FlowStepType })}
                   className="w-full px-2 py-1 dark:bg-black dark:text-white rounded border text-sm"
                 >
                   {['CHOICE', 'MULTI_CHOICE', 'TEXT', 'NUMBER', 'EMAIL', 'PHONE'].map((t) => (
@@ -290,7 +295,7 @@ export function FlowBuilderForm({ domainId }: Props) {
                 <label className="text-xs font-bold text-muted-foreground">Maps To</label>
                 <select
                   value={form.mapsTo}
-                  onChange={(e) => setForm({ ...form, mapsTo: e.target.value })}
+                  onChange={(e) => setForm({ ...form, mapsTo: e.target.value as FlowStepMapsTo })}
                   className="w-full dark:bg-black dark:text-white px-2 py-1 rounded border text-sm"
                 >
                   {['NONE', 'NAME', 'EMAIL', 'PHONE'].map((m) => (
