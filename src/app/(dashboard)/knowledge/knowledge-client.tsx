@@ -41,13 +41,21 @@ export function KnowledgeClient({
   })
 
   useEffect(() => {
-    if (!domainId) return
+    console.log('useEffect: domainId =', domainId)
+    if (!domainId) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     onGetKnowledgeItems(domainId)
       .then((res: any) => {
-        if (res?.ok) setItems((res.data as any).items || [])
+        console.log('onGetKnowledgeItems resolved:', res)
+        if (res?.ok) setItems((res.data as any).items ?? [])
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        console.log('finally called, setLoading(false)')
+        setLoading(false)
+      })
   }, [domainId])
 
   const onAdd = () => setForm({ title: '', content: '', category: '', isActive: true })

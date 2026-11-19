@@ -18,6 +18,7 @@ const KnowledgeItemInput = z.object({
 })
 
 export const onGetKnowledgeItems = async (domainId: string): Promise<ActionResult> => {
+  console.log('onGetKnowledgeItems called with domainId:', domainId)
   return action(async () => {
     await requireDomainAccess(domainId)
     const items = await client.knowledgeItem.findMany({
@@ -25,7 +26,8 @@ export const onGetKnowledgeItems = async (domainId: string): Promise<ActionResul
       orderBy: { updatedAt: 'desc' },
       select: { id: true, title: true, content: true, category: true, isActive: true, createdAt: true, updatedAt: true },
     })
-    return { ok: true, data: { items } }
+    console.log('knowledge items found:', items.length)
+    return { items }
   })
 }
 
