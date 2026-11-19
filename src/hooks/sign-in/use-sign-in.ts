@@ -1,6 +1,6 @@
 import { useToast } from '@/components/ui/use-toast'
 import { UserLoginProps, UserLoginSchema } from '@/schemas/auth.schema'
-import { useSignIn } from '@clerk/nextjs'
+import { useSignIn, useAuth } from '@clerk/nextjs'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
@@ -8,6 +8,7 @@ import { useForm } from 'react-hook-form'
 
 export const useSignInForm = () => {
   const { isLoaded, setActive, signIn } = useSignIn()
+  const { isSignedIn } = useAuth()
   const [loading, setLoading] = useState<boolean>(false)
   const router = useRouter()
   const { toast } = useToast()
@@ -22,6 +23,15 @@ export const useSignInForm = () => {
           title: 'Please wait',
           description: 'Authentication is still initializing. Please try again in a moment.',
         })
+        return
+      }
+
+      if (isSignedIn) {
+        toast({
+          title: 'Already signed in',
+          description: 'You are already logged in.',
+        })
+        router.push('/dashboard')
         return
       }
 
