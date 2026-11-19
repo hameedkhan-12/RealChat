@@ -83,7 +83,7 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
     const res = await onCloseConversation(id)
     if (res?.ok) {
       setFilter(undefined)
-      setChatRooms(prev => prev.map((c: any) => c.chatRoom.map((r: any) => r.id === id ? { ...r, status: 'CLOSED' } : r)).flat())
+      setChatRooms(prev => prev.map((r: any) => r.id === id ? { ...r, status: 'CLOSED' } : r))
     }
   }
 
@@ -91,7 +91,7 @@ export const useConversation = (domains?: { name: string; id: string; icon: stri
     const res = await onReturnToBot(id)
     if (res?.ok) {
       setFilter(undefined)
-      setChatRooms((prev: any[]) => prev.map((c: any) => c.chatRoom.map((r: any) => r.id === id ? { ...r, status: 'BOT', assignedToUserId: null } : r)).flat())
+      setChatRooms((prev: any[]) => prev.map((r: any) => r.id === id ? { ...r, status: 'BOT', assignedToUserId: null } : r))
     }
   }
 
