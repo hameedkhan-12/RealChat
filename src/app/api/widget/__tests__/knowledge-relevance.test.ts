@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rankKnowledgeByRelevance } from '@/app/api/widget/message/route'
+import { rankKnowledgeByRelevance } from '@/server/knowledge-retrieval'
 
 describe('rankKnowledgeByRelevance', () => {
   it('ranks items with more keyword matches higher', () => {

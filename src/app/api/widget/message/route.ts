@@ -5,7 +5,8 @@ import { rateLimit, getClientIp } from '@/lib/rate-limit'
 import { requireWidgetSession } from '@/lib/widget-auth'
 import { MessageBody } from '@/lib/validation'
 import { advanceFlow } from '@/server/flow'
-import { aiProvider } from '@/server/ai'
+import { generateGroundedAnswer } from '@/server/ai-answer'
+import { retrieveKnowledge } from '@/server/knowledge-retrieval'
 import { getPusherServer, roomChannel } from '@/lib/pusher-server'
 
 export const POST = handle(async (req: Request): Promise<Response> => {
@@ -124,30 +125,16 @@ export const POST = handle(async (req: Request): Promise<Response> => {
       await publishMessageEvent(room.id, visitorMsg.id)
 
       // Retrieve active knowledge for this domain, ranked by keyword relevance
-      const allKnowledge = await client.knowledgeItem.findMany({
-        where: { domainId: room.domainId, isActive: true },
-        select: { id: true, title: true, content: true },
+      const retrieval = await retrieveKnowledge({
+        domainId: room.domainId,
+        question: input.content,
       })
 
-      const knowledge = rankKnowledgeByRelevance(input.content, allKnowledge).slice(0, 5)
-
-      let aiAnswer: string
-      let aiEscalate = false
-      let usedKnowledgeIds: string[] = []
-
-      if (knowledge.length > 0) {
-        const grounded = await aiProvider.answerFromKnowledge({
-          question: input.content,
-          knowledge: knowledge.map((k) => ({ title: k.title, content: k.content })),
-          locale: room.locale ?? 'en',
-        })
-        aiAnswer = grounded.answer
-        aiEscalate = grounded.shouldEscalate
-        usedKnowledgeIds = knowledge.map((k) => k.id)
-      } else {
-        aiAnswer = `I don't have confirmed information about that. A team member can help you.`
-        aiEscalate = true
-      }
+      // Generate grounded AI answer using only retrieved knowledge
+      const aiResult = await generateGroundedAnswer({
+        question: input.content,
+        knowledge: retrieval.candidates,
+      })
 
       // Atomically claim the room for AI response only if still BOT
       // updateMany with WHERE status='BOT' is atomic at DB level - PostgreSQL locks the row
@@ -172,10 +159,14 @@ export const POST = handle(async (req: Request): Promise<Response> => {
       const aiMsg = await client.chatMessage.create({
         data: {
           chatRoomId: room.id,
-          message: aiAnswer,
+          message: aiResult.answer,
           senderType: 'BOT',
           kind: 'AI_ANSWER',
-          metadata: { knowledgeIds: usedKnowledgeIds, escalate: aiEscalate },
+          metadata: {
+            knowledgeIds: aiResult.usedKnowledgeIds,
+            escalate: aiResult.canAnswer ? false : true,
+            abstainReason: aiResult.abstainReason,
+          },
         },
       })
       await publishMessageEvent(room.id, aiMsg.id)
@@ -185,7 +176,7 @@ export const POST = handle(async (req: Request): Promise<Response> => {
         room: { status: 'BOT' },
         messages: [
           { id: visitorMsg.id, senderType: 'VISITOR', content: input.content },
-          { id: aiMsg.id, senderType: 'BOT', kind: 'AI_ANSWER', content: aiAnswer },
+          { id: aiMsg.id, senderType: 'BOT', kind: 'AI_ANSWER', content: aiResult.answer },
         ],
         currentStep: null,
         flowCompleted: false,
@@ -239,22 +230,3 @@ async function publishMessageEvent(roomId: string, messageId: string) {
     // Pusher failure must not roll back a committed message
   }
 }
-
-/** Rank knowledge items by keyword relevance to the question. */
-export function rankKnowledgeByRelevance(
-  question: string,
-  items: Array<{ id: string; title: string; content: string }>
-): Array<{ id: string; title: string; content: string }> {
-  const qWords = question.toLowerCase().split(/\s+/).filter((w) => w.length > 2)
-  if (qWords.length === 0) return items
-  return items
-    .map((item) => {
-      const text = `${item.title} ${item.content}`.toLowerCase()
-      const score = qWords.filter((w) => text.includes(w)).length
-      return { item, score }
-    })
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map((x) => x.item)
-}
-

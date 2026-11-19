@@ -28,6 +28,37 @@ function isConfigured(): boolean {
   return Boolean(env.AI_API_KEY && env.AI_BASE_URL && env.AI_MODEL)
 }
 
+const MAX_RETRIES = 2
+const RETRY_DELAY_MS = 1000
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchWithRetry(
+  url: string,
+  opts: RequestInit,
+  retries: number = MAX_RETRIES
+): Promise<Response> {
+  let lastError: Error | undefined
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, opts)
+      // Retry on transient server errors (5xx) or network failures
+      if (res.ok || res.status < 500) {
+        return res
+      }
+      lastError = new Error(`HTTP ${res.status}`)
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e))
+    }
+    if (attempt < retries) {
+      await sleep(RETRY_DELAY_MS * (attempt + 1))
+    }
+  }
+  throw lastError || new Error('Failed after retries')
+}
+
 export const aiProvider: AIProvider = {
   async answerFromKnowledge(input: GroundedAnswerInput): Promise<GroundedAnswer> {
     const env = getEnv()
@@ -57,23 +88,27 @@ ${knowledgeText || '(none available)'}`
     const apiKey = env.AI_API_KEY!
     const model = env.AI_MODEL!
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 10000)
+    const timer = setTimeout(() => controller.abort(), 15000)
 
     try {
-      const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${apiKey}`,
+      const res = await fetchWithRetry(
+        `${baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: model,
+            messages,
+            temperature: 0.2,
+            max_tokens: 500,
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          model: model,
-          messages,
-          temperature: 0.2,
-          max_tokens: 500,
-        }),
-        signal: controller.signal,
-      })
+        MAX_RETRIES
+      )
       clearTimeout(timer)
 
       if (!res.ok) {
@@ -87,6 +122,7 @@ ${knowledgeText || '(none available)'}`
       if (!parsed.success) {
         logger.error('ai provider output validation failed', {
           error: parsed.error.flatten().fieldErrors,
+          question: input.question.slice(0, 100),
         })
         return fallbackAnswer()
       }
@@ -95,6 +131,7 @@ ${knowledgeText || '(none available)'}`
       clearTimeout(timer)
       logger.error('ai provider call failed', {
         error: e instanceof Error ? e.message : String(e),
+        question: input.question.slice(0, 100),
       })
       return fallbackAnswer()
     }

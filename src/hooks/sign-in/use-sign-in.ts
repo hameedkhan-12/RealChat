@@ -3,7 +3,7 @@ import { UserLoginProps, UserLoginSchema } from '@/schemas/auth.schema'
 import { useSignIn, useAuth } from '@clerk/nextjs'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 export const useSignInForm = () => {
@@ -16,6 +16,13 @@ export const useSignInForm = () => {
     resolver: zodResolver(UserLoginSchema),
     mode: 'onChange',
   })
+
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      router.push('/dashboard')
+    }
+  }, [isLoaded, isSignedIn, router])
+
   const onHandleSubmit = methods.handleSubmit(
     async (values: UserLoginProps) => {
       if (!isLoaded) {
@@ -23,15 +30,6 @@ export const useSignInForm = () => {
           title: 'Please wait',
           description: 'Authentication is still initializing. Please try again in a moment.',
         })
-        return
-      }
-
-      if (isSignedIn) {
-        toast({
-          title: 'Already signed in',
-          description: 'You are already logged in.',
-        })
-        router.push('/dashboard')
         return
       }
 
