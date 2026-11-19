@@ -3,7 +3,10 @@ import { BotIcon } from '@/icons/bot-icon'
 import CalIcon from '@/icons/cal-icon'
 import ChatIcon from '@/icons/chat-icon'
 import DashboardIcon from '@/icons/dashboard-icon'
+import DocumentsIcon from '@/icons/documents-icon'
 import HelpDeskIcon from '@/icons/help-desk-icon'
+import MoneyIcon from '@/icons/money-icon'
+import PersonIcon from '@/icons/person-icon'
 import SettingsIcon from '@/icons/settings-icon'
 import StarIcon from '@/icons/star-icon'
 import TimerIcon from '@/icons/timer-icon'
@@ -14,6 +17,9 @@ export const SIDE_BAR_MENU: SIDE_BAR_MENU_PROPS[] = [
   { label: 'Dashboard', icon: <DashboardIcon />, path: 'dashboard' },
   { label: 'Conversations', icon: <ChatIcon />, path: 'conversations' },
   { label: 'Flow Builder', icon: <BotIcon />, path: 'flow' },
+  { label: 'Knowledge', icon: <DocumentsIcon />, path: 'knowledge' },
+  { label: 'Leads', icon: <MoneyIcon />, path: 'leads' },
+  { label: 'Team', icon: <PersonIcon />, path: 'team' },
   { label: 'Settings', icon: <SettingsIcon />, path: 'settings' },
   { label: 'Appointments', icon: <CalIcon />, path: 'appointments' },
 ]
