@@ -1,3 +1,5 @@
+import { getRequestId } from '@/lib/request-context'
+
 type Level = 'info' | 'warn' | 'error'
 
 function redact(value: unknown): unknown {
@@ -18,12 +20,44 @@ function redact(value: unknown): unknown {
   return value
 }
 
+function buildMeta(meta?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!meta) return undefined
+  const requestId = getRequestId()
+  const out: Record<string, unknown> = { ...meta }
+  if (requestId) out.requestId = requestId
+  return redact(out) as Record<string, unknown>
+}
+
 export function log(level: Level, msg: string, meta?: Record<string, unknown>) {
-  const payload = { level, msg, ...(meta ? { meta: redact(meta) } : {}) }
-  // Sentry hook placeholder
-  if (level === 'error') console.error(JSON.stringify(payload))
-  else if (level === 'warn') console.warn(JSON.stringify(payload))
-  else console.info(JSON.stringify(payload))
+  const metaOut = buildMeta(meta)
+  const payload = { level, msg, ...(metaOut ? { meta: metaOut } : {}) }
+  if (level === 'error') {
+    console.error(JSON.stringify(payload))
+    captureError(new Error(msg), { level, ...(metaOut ?? {}) })
+  } else if (level === 'warn') {
+    console.warn(JSON.stringify(payload))
+  } else {
+    console.info(JSON.stringify(payload))
+  }
+}
+
+/** Send an error to Sentry when a DSN is configured. No-op otherwise (no hard dependency). */
+export async function captureError(
+  error: unknown,
+  meta?: Record<string, unknown>,
+): Promise<void> {
+  const dsn = process.env.SENTRY_DSN
+  if (!dsn) return
+  try {
+    // Dynamic import via variable so @sentry/node remains an optional dependency
+    // (only loaded when SENTRY_DSN is configured).
+    const moduleName = '@sentry/node'
+    const { init, captureException } = await import(moduleName)
+    init({ dsn, tracesSampleRate: 0 })
+    captureException(error, { extra: meta })
+  } catch {
+    // Sentry unavailable or misconfigured; the error is already logged above.
+  }
 }
 
 export const logger = {

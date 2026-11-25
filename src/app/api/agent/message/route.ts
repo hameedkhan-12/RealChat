@@ -22,21 +22,36 @@ export const POST = handle(async (req: Request): Promise<NextResponse> => {
 
   const { user } = await requireDomainAccess(input.domainId, 'AGENT')
 
-  // Verify the room belongs to this domain
+  // Verify the room belongs to this domain (do not leak which rooms exist)
   const room = await client.chatRoom.findUnique({
     where: { id: input.chatRoomId },
     select: { id: true, domainId: true, status: true, assignedToUserId: true },
   })
   if (!room || room.domainId !== input.domainId) {
-    throw new HttpError(403, 'FORBIDDEN') // do not leak which rooms exist
+    throw new HttpError(403, 'FORBIDDEN')
   }
 
-  // Agent can only message rooms assigned to them (or rooms that are LIVE/WARNING_AGENT)
-  if (room.status !== 'LIVE' && room.status !== 'WAITING_AGENT') {
+  // Only LIVE conversations can receive agent messages
+  if (room.status !== 'LIVE') {
     throw new HttpError(409, 'ROOM_NOT_ACTIVE')
   }
-  if (room.assignedToUserId && room.assignedToUserId !== user.id) {
-    throw new HttpError(403, 'FORBIDDEN') // not assigned to this agent
+
+  // Only the assigned agent can send messages - atomic conditional update
+  // (read-then-write is avoided for the ownership guard; the update below is the
+  // authoritative conditional check executed at the DB level)
+  const updated = await client.chatRoom.updateMany({
+    where: {
+      id: input.chatRoomId,
+      domainId: input.domainId,
+      status: 'LIVE',
+      assignedToUserId: user.id,
+    },
+    data: { lastActivityAt: new Date() },
+  })
+
+  if (updated.count === 0) {
+    // Room is LIVE but not assigned to this agent
+    throw new HttpError(403, 'FORBIDDEN')
   }
 
   // Sender type is ALWAYS AGENT — never trust client-supplied role

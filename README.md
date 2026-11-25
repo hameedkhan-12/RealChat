@@ -144,9 +144,20 @@ src/
   providers/        Theme/auth providers
 prisma/
   schema.prisma     Database schema
+  migrations/       Prisma migration history
 public/
   embed.js          Chatbot embed script
+docs/
+  BACKUP_AND_RECOVERY.md   PostgreSQL backup strategy and recovery procedure
+  DEPLOYMENT.md            Deployment, migration, and rollback procedures
 ```
+
+## Documentation
+
+- [Backup and Recovery](docs/BACKUP_AND_RECOVERY.md) — PostgreSQL backup strategy, recovery procedure, RPO/RTO targets
+- [Deployment](docs/DEPLOYMENT.md) — Deployment procedure, migration process, rollback strategy
+- [Security](SECURITY.md) — Authentication, authorization, tenant isolation, rate limiting, vulnerability reporting
+
 
 ## License
 

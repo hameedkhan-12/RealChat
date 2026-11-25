@@ -38,14 +38,29 @@ function memoryLimit(key: string, limit: number, windowMs: number): LimitResult 
   return { success: true, remaining: limit - e.count }
 }
 
-export async function rateLimit(key: string, limit: number, windowSeconds: number): Promise<LimitResult> {
+export async function rateLimit(
+  key: string,
+  limit: number,
+  windowSeconds: number,
+  failClosed = false,
+): Promise<LimitResult> {
   const r = getRedis()
-  if (!r) return memoryLimit(key, limit, windowSeconds * 1000)
+  if (!r) {
+    // In distributed production a per-instance memory counter is NOT shared, so an
+    // attacker can bypass limits by hitting different instances. Fail closed on
+    // expensive public endpoints instead of silently allowing more traffic.
+    if (failClosed) {
+      logger.warn('rate limit backend unavailable, failing closed', { key })
+      return { success: false, remaining: 0 }
+    }
+    return memoryLimit(key, limit, windowSeconds * 1000)
+  }
   try {
     const res = await limiterFor(r, limit, windowSeconds).limit(key)
     return { success: res.success, remaining: res.remaining, reset: res.reset }
   } catch (e) {
-    logger.error('rate limit backend failed, using memory fallback', { error: String(e) })
+    logger.error('rate limit backend failed', { error: String(e), key, failClosed })
+    if (failClosed) return { success: false, remaining: 0 }
     return memoryLimit(key, limit, windowSeconds * 1000)
   }
 }

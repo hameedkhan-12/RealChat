@@ -11,11 +11,11 @@ import { createSessionToken, hashToken } from '@/lib/session'
 export const POST = handle(async (req: Request) => {
   assertSameOrigin(req)
   const ip = getClientIp(req)
-  const rl = await rateLimit(`book:ip:${ip}`, 10, 60)
+  const rl = await rateLimit(`book:ip:${ip}`, 10, 60, true)
   if (!rl.success) throw new HttpError(429, 'RATE_LIMITED')
 
   const { room } = await requireWidgetSession(req)
-  const sessionRl = await rateLimit(`book:room:${room.id}`, 20, 60)
+  const sessionRl = await rateLimit(`book:room:${room.id}`, 20, 60, true)
   if (!sessionRl.success) throw new HttpError(429, 'RATE_LIMITED')
 
   const input = await readJson(req, BookingBody, 4096)

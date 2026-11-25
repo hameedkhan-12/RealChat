@@ -12,11 +12,11 @@ import { getPusherServer, roomChannel } from '@/lib/pusher-server'
 export const POST = handle(async (req: Request): Promise<Response> => {
   assertSameOrigin(req)
   const ip = getClientIp(req)
-  const rl = await rateLimit(`msg:ip:${ip}`, 60, 60)
+  const rl = await rateLimit(`msg:ip:${ip}`, 60, 60, true)
   if (!rl.success) throw new HttpError(429, 'RATE_LIMITED')
 
   const { room } = await requireWidgetSession(req)
-  const sessionRl = await rateLimit(`msg:room:${room.id}`, 60, 60)
+  const sessionRl = await rateLimit(`msg:room:${room.id}`, 60, 60, true)
   if (!sessionRl.success) throw new HttpError(429, 'RATE_LIMITED')
 
   const input = await readJson(req, MessageBody, 16_384)
@@ -136,40 +136,57 @@ export const POST = handle(async (req: Request): Promise<Response> => {
         knowledge: retrieval.candidates,
       })
 
-      // Atomically claim the room for AI response only if still BOT
-      // updateMany with WHERE status='BOT' is atomic at DB level - PostgreSQL locks the row
-      const claim = await client.chatRoom.updateMany({
-        where: { id: room.id, status: 'BOT' },
-        data: { lastActivityAt: new Date() },
-      })
-      if (claim.count === 0) {
-        // Room is no longer BOT (agent took over or room closed)
-        const freshRoom = await client.chatRoom.findUnique({
-          where: { id: room.id },
-          select: { status: true },
+      // Atomically claim the room for AI response and persist the AI message in one
+      // transaction. The UPDATE takes a row lock on the chatRoom, so a concurrent
+      // takeover either happens before (claim count 0 -> discard) or blocks until we
+      // commit (then fails because status is no longer WAITING_AGENT). This prevents
+      // a stale AI response from being saved after a human has taken ownership.
+      let aiMsg: { id: string } | null = null
+      try {
+        aiMsg = await client.$transaction(async (tx) => {
+          const claim = await tx.chatRoom.updateMany({
+            where: { id: room.id, status: 'BOT' },
+            data: { lastActivityAt: new Date() },
+          })
+          if (claim.count === 0) {
+            // No longer BOT (agent took over or room closed): roll back and discard.
+            const err = new Error('AI_NO_LONGER_OWNS_CONVERSATION')
+            ;(err as any).aiDiscard = true
+            throw err
+          }
+          return tx.chatMessage.create({
+            data: {
+              chatRoomId: room.id,
+              message: aiResult.answer,
+              senderType: 'BOT',
+              kind: 'AI_ANSWER',
+              metadata: {
+                knowledgeIds: aiResult.usedKnowledgeIds,
+                escalate: aiResult.canAnswer ? false : true,
+                abstainReason: aiResult.abstainReason,
+              },
+            },
+            select: { id: true },
+          })
         })
-        return NextResponse.json({
-          ok: true,
-          room: { status: freshRoom?.status ?? room.status },
-          messages: [{ id: visitorMsg.id, senderType: 'VISITOR', content: input.content }],
-          currentStep: null,
-          flowCompleted: false,
-        })
+      } catch (e) {
+        if ((e as any)?.aiDiscard) {
+          const freshRoom = await client.chatRoom.findUnique({
+            where: { id: room.id },
+            select: { status: true },
+          })
+          return NextResponse.json({
+            ok: true,
+            room: { status: freshRoom?.status ?? room.status },
+            messages: [{ id: visitorMsg.id, senderType: 'VISITOR', content: input.content }],
+            currentStep: null,
+            flowCompleted: false,
+          })
+        }
+        throw e
       }
-      const aiMsg = await client.chatMessage.create({
-        data: {
-          chatRoomId: room.id,
-          message: aiResult.answer,
-          senderType: 'BOT',
-          kind: 'AI_ANSWER',
-          metadata: {
-            knowledgeIds: aiResult.usedKnowledgeIds,
-            escalate: aiResult.canAnswer ? false : true,
-            abstainReason: aiResult.abstainReason,
-          },
-        },
-      })
-      await publishMessageEvent(room.id, aiMsg.id)
+      // Publish only after the AI message has been committed.
+      await publishMessageEvent(room.id, aiMsg!.id)
 
       return NextResponse.json({
         ok: true,

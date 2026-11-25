@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 import { NextResponse } from 'next/server'
+import { createRequestId, withRequestContext } from '@/lib/request-context'
 
 const isPublicRoute = createRouteMatcher([
   '/', '/auth(.*)', '/chatbot(.*)', '/embed.js',
@@ -26,14 +27,18 @@ async function ancestorsFor(origin: string, key: string): Promise<string[]> {
 }
 
 export default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) await auth.protect()
-  const res = NextResponse.next()
-  if (request.nextUrl.pathname === '/chatbot') {
-    const key = request.nextUrl.searchParams.get('key') ?? ''
-    const ancestors = KEY_RE.test(key) ? await ancestorsFor(request.nextUrl.origin, key) : []
-    res.headers.set('Content-Security-Policy', `frame-ancestors 'self' ${ancestors.join(' ')}`.trim())
-  }
-  return res
+  const requestId = createRequestId()
+  return withRequestContext(requestId, async () => {
+    if (!isPublicRoute(request)) await auth.protect()
+    const res = NextResponse.next()
+    res.headers.set('X-Request-Id', requestId)
+    if (request.nextUrl.pathname === '/chatbot') {
+      const key = request.nextUrl.searchParams.get('key') ?? ''
+      const ancestors = KEY_RE.test(key) ? await ancestorsFor(request.nextUrl.origin, key) : []
+      res.headers.set('Content-Security-Policy', `frame-ancestors 'self' ${ancestors.join(' ')}`.trim())
+    }
+    return res
+  })
 })
 
 export const config = {

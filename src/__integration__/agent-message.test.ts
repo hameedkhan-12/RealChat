@@ -5,11 +5,12 @@ import { requireDomainAccess } from '@/lib/auth'
 const mockFindUnique = vi.fn()
 const mockCreate = vi.fn()
 const mockUpdate = vi.fn()
+const mockUpdateMany = vi.fn()
 const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
 
 vi.mock('@/lib/prisma', () => ({
   client: {
-    chatRoom: { findUnique: mockFindUnique, update: mockUpdate },
+    chatRoom: { findUnique: mockFindUnique, update: mockUpdate, updateMany: mockUpdateMany },
     chatMessage: { create: mockCreate },
   },
 }))
@@ -52,6 +53,7 @@ describe('agent message', () => {
     })
     mockCreate.mockResolvedValue({ id: 'msg-1', message: 'Hello', senderType: 'AGENT', createdAt: new Date() })
     mockUpdate.mockResolvedValue({})
+    mockUpdateMany.mockResolvedValue({ count: 1 })
   })
 
   it('sends a message as AGENT (sender type forced, not from client)', async () => {
@@ -77,6 +79,7 @@ describe('agent message', () => {
 
   it('rejects messaging a room not assigned to this agent', async () => {
     mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'LIVE', assignedToUserId: 'agent-2' })
+    mockUpdateMany.mockResolvedValue({ count: 0 })
     const { POST } = await import('@/app/api/agent/message/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1', content: 'Hello' }))
     expect(res.status).toBe(403)

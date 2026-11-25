@@ -1,6 +1,7 @@
 'use client'
 
 import { onDeleteLead, onExportLeadsCSV, onGetLeads } from '@/actions/settings'
+import Link from 'next/link'
 import React, { useEffect, useState } from 'react'
 
 type LeadsClientProps = {
@@ -90,7 +91,14 @@ export function LeadsClient({
             ) : (
               leads.map((l: any) => (
                 <tr key={l.id} className="border-b hover:bg-muted/50">
-                  <td className="p-3 text-sm">{l.name || '—'}</td>
+                  <td className="p-3 text-sm">
+                    <Link
+                      href={`/dashboard/leads/${l.id}`}
+                      className="text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      {l.name || '—'}
+                    </Link>
+                  </td>
                   <td className="p-3 text-sm">{l.email || '—'}</td>
                   <td className="p-3 text-sm">{l.phone || '—'}</td>
                   <td className="p-3 text-sm">

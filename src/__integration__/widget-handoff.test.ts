@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { requireWidgetSession } from '@/lib/widget-auth'
 
-const mockUpdate = vi.fn()
+const mockUpdateMany = vi.fn()
 const mockFindUnique = vi.fn()
-const mockRateLimit = vi.fn()
+const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
 
 vi.mock('@/lib/prisma', () => ({
   client: {
-    chatRoom: { findUnique: mockFindUnique, update: mockUpdate },
+    chatRoom: { findUnique: mockFindUnique, updateMany: mockUpdateMany },
   },
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () => '1.2.3.4' }))
@@ -45,7 +45,7 @@ describe('widget handoff', () => {
     vi.clearAllMocks()
     mockRateLimit.mockResolvedValue({ success: true })
     mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null })
-    mockUpdate.mockResolvedValue({})
+    mockUpdateMany.mockResolvedValue({ count: 1 })
   })
 
   it('transitions BOT room to WAITING_AGENT on handoff', async () => {
@@ -55,14 +55,14 @@ describe('widget handoff', () => {
     const json = await res.json()
     expect(json.ok).toBe(true)
     expect(json.status).toBe('WAITING_AGENT')
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: 'room-1' },
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'room-1', domainId: 'domain-1', status: 'BOT' },
       data: { status: 'WAITING_AGENT', lastActivityAt: expect.any(Date) },
     })
   })
 
   it('is idempotent: repeated handoff on already WAITING_AGENT room returns current state', async () => {
-    mockUpdate.mockClear()
+    mockUpdateMany.mockClear()
     vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'WAITING_AGENT', consentAt: new Date(), currentStepKey: null } } as any)
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res1 = await POST(makeReq())
@@ -70,8 +70,8 @@ describe('widget handoff', () => {
     const json1 = await res1.json()
     expect(json1.ok).toBe(true)
     expect(json1.status).toBe('WAITING_AGENT')
-    // update should NOT be called for already-waiting room
-    expect(mockUpdate).not.toHaveBeenCalled()
+    // updateMany should NOT be called for already-waiting room
+    expect(mockUpdateMany).not.toHaveBeenCalled()
 
     // Second request still returns success
     const res2 = await POST(makeReq())

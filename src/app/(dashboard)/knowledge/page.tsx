@@ -12,10 +12,15 @@ export default async function KnowledgePage({
   searchParams,
 }: KnowledgePageProps) {
   const sp = await searchParams
-  const domainId = typeof sp.domain === 'string' ? sp.domain : ''
+  let domainId = typeof sp.domain === 'string' ? sp.domain : ''
 
   const account = await onGetAllAccountDomains()
   const domains = account?.domains ?? []
+
+  // Auto-select the user's first domain when none is specified
+  if (!domainId && domains.length > 0) {
+    domainId = domains[0].id
+  }
 
   let items: any[] = []
   if (domainId) {

@@ -8,7 +8,7 @@ import { getPusherServer, roomChannel } from '@/lib/pusher-server'
 
 export const POST = handle(async (req: Request): Promise<NextResponse> => {
   const ip = getClientIp(req)
-  const rl = await rateLimit(`handoff:${ip}`, 10, 60)
+  const rl = await rateLimit(`handoff:${ip}`, 10, 60, true)
   if (!rl.success) throw new HttpError(429, 'RATE_LIMITED')
 
   const { room } = await requireWidgetSession(req)
@@ -22,10 +22,31 @@ export const POST = handle(async (req: Request): Promise<NextResponse> => {
     throw new HttpError(409, 'ROOM_NOT_CLAIMABLE')
   }
 
-  await client.chatRoom.update({
-    where: { id: room.id },
-    data: { status: 'WAITING_AGENT', lastActivityAt: new Date() },
+  // Atomic claim: only change if room is BOT
+  const updated = await client.chatRoom.updateMany({
+    where: {
+      id: room.id,
+      domainId: room.domainId,
+      status: 'BOT',
+    },
+    data: {
+      status: 'WAITING_AGENT',
+      lastActivityAt: new Date(),
+    },
   })
+
+  if (updated.count === 0) {
+    // Room was taken by another visitor or agent between checks
+    const freshRoom = await client.chatRoom.findUnique({
+      where: { id: room.id },
+      select: { status: true },
+    })
+    return NextResponse.json({
+      ok: true,
+      room: { status: freshRoom?.status ?? room.status },
+      chatRoomId: room.id,
+    })
+  }
 
   // Notify tenant via email (notificationEmails)
   const emails = room.domain.notificationEmails ?? []

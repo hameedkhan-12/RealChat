@@ -9,15 +9,15 @@ import { SessionBody } from '@/lib/validation'
 export const POST = handle(async (req: Request) => {
   assertSameOrigin(req)
   const ip = getClientIp(req)
-  const minute = await rateLimit(`sess:ip:${ip}`, 10, 60)
-  const day = await rateLimit(`sess:ipday:${ip}`, 100, 86_400)
+  const minute = await rateLimit(`sess:ip:${ip}`, 10, 60, true)
+  const day = await rateLimit(`sess:ipday:${ip}`, 100, 86_400, true)
   if (!minute.success || !day.success) throw new HttpError(429, 'RATE_LIMITED')
 
   const input = await readJson(req, SessionBody, 4096)
 
   const domain = await client.domain.findUnique({ where: { publicKey: input.key }, select: { id: true } })
   if (!domain) throw new HttpError(404, 'UNKNOWN_KEY')
-  const perKey = await rateLimit(`sess:key:${input.key}`, 300, 60)
+  const perKey = await rateLimit(`sess:key:${input.key}`, 300, 60, true)
   if (!perKey.success) throw new HttpError(429, 'RATE_LIMITED')
 
   if (!(await verifyTurnstile(input.turnstileToken, ip))) throw new HttpError(403, 'BOT_CHECK_FAILED')
