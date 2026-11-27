@@ -114,17 +114,18 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
     onChats, onAiTyping, currentBot, loading, config, sessionToken,
     consentGiven, setConsentGiven, requestHandoff, status, acceptConsent,
     sendQuestion, errors, turnstileSiteKey, flow, locale,
+    initSession,
   } = useChatBot(publicKey)
 
   const brand = config?.brand
-  const domainName = config?.domainName || 'Business'
-  const botName = brand?.botName || domainName || 'Assistant'
+  const domainName = config?.domain.name || 'Business'
+  const botName = brand?.name || domainName || 'Assistant'
   const welcome = brand?.welcomeMessage || currentBot?.welcomeMessage || 'Hi! How can we help you today?'
   const position = brand?.position === 'BOTTOM_LEFT' ? 'BOTTOM_LEFT' : 'BOTTOM_RIGHT'
   const primary = brand?.primaryColor || '#0f172a'
   const textColor = brand?.textColor || '#ffffff'
   const avatarUrl = brand?.avatarUrl
-  const defaultLocale: Lang = (lang || config?.defaultLocale || 'en') as Lang
+  const defaultLocale: Lang = (lang || config?.domain.defaultLocale || 'en') as Lang
   const strings = getStrings(defaultLocale)
   const isRTL = defaultLocale === 'ar'
   const handoffEnabled = config?.features.handoff !== false
@@ -140,6 +141,8 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
   const side = position === 'BOTTOM_LEFT' ? 'left' : 'right'
   const winPosStyle: React.CSSProperties = { position: 'fixed', bottom: '4px', [side]: '4px' }
 
+  // Turnstile: load only after config supplies site key.
+  // After obtaining a token, create the session with the token.
   useEffect(() => {
     if (!turnstileSiteKey || turnstileWidgetId !== null) return
     loadTurnstile().then(() => {
@@ -152,19 +155,26 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
       document.body.appendChild(container)
       const id = (window as any).turnstile.render('#realchat-turnstile-widget', {
         sitekey: turnstileSiteKey,
-        callback: (token: string) => setTurnstileToken(token),
+        callback: async (token: string) => {
+          setTurnstileToken(token)
+          if (publicKey) {
+            await initSession(publicKey, token)
+          }
+        },
         'error-callback': () => setTurnstileToken(null),
         'expired-callback': () => setTurnstileToken(null),
       })
       setTurnstileWidgetId(id)
     }).catch(() => {
-      // Turnstile load failure — proceed without token
+      // Turnstile load failure — proceed without token (session will fail if required)
     })
-  }, [turnstileSiteKey])
+  }, [turnstileSiteKey, publicKey, initSession, turnstileWidgetId])
 
+  // Reset Turnstile when a new session starts
   useEffect(() => {
     if (turnstileWidgetId !== null && sessionToken) {
       ;(window as any).turnstile.reset(turnstileWidgetId)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTurnstileToken(null)
     }
   }, [sessionToken, turnstileWidgetId])

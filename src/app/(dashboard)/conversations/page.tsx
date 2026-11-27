@@ -1,8 +1,7 @@
 import { onGetAllAccountDomains } from '@/actions/settings'
-import { onGetDomainChatRooms, onGetCustomerAnswers, onCloseConversation, onReturnToBot } from '@/actions/conversation'
+import { onGetDomainChatRooms } from '@/actions/conversation'
 import { ChatRoomItem } from '@/actions/conversation'
 import InfoBar from '@/components/infobar'
-import { Separator } from '@/components/ui/separator'
 import { DomainSelector } from './domain-selector'
 import { DashboardConversationQuerySchema } from '@/lib/validations/dashboard/conversation-query.schema'
 
@@ -47,12 +46,10 @@ export default async function ConversationsPage({
 }) {
   const sp = await searchParams
   const domainId = typeof sp.domain === 'string' ? sp.domain : ''
-  const selectedRoomId = typeof sp.room === 'string' ? sp.room : ''
   const cursor = typeof sp.cursor === 'string' ? sp.cursor : undefined
   const status = sp.status as StatusFilter | undefined
   const search = typeof sp.search === 'string' ? sp.search : ''
 
-  // Validate query params; invalid params are safely ignored
   DashboardConversationQuerySchema.safeParse({
     domain: sp.domain,
     status: sp.status,
@@ -71,16 +68,6 @@ export default async function ConversationsPage({
       rooms = data.data.items
       nextCursor = data.data.nextCursor
     }
-  }
-
-  const waitingCount = rooms.filter((r) => r.status === 'WAITING_AGENT').length
-  const liveCount = rooms.filter((r) => r.status === 'LIVE').length
-
-  const selectedRoom = rooms.find((r) => r.id === selectedRoomId)
-  let customerAnswers: any = null
-  if (selectedRoom) {
-    const res = await onGetCustomerAnswers(selectedRoom?.customer.id)
-    if (res?.ok) customerAnswers = res.data
   }
 
   const baseParams: Record<string, string | undefined> = {
@@ -146,113 +133,42 @@ export default async function ConversationsPage({
           </form>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          <div className="w-[400px] border-r border-border flex flex-col overflow-hidden">
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <h2 className="text-sm font-bold">Conversations</h2>
-              <span className="text-xs font-medium text-muted-foreground">{rooms.length}</span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-2">
-              {rooms.length === 0 ? (
-                <div className="text-center py-10 text-muted-foreground text-sm">No conversations</div>
-              ) : (
-                rooms.map((r) => (
-                  <a
-                    key={r.id}
-                    href={buildUrl({ ...baseParams, room: r.id, cursor: undefined })}
-                    className={`block p-3 rounded-lg border transition-colors ${selectedRoomId === r.id ? 'bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800' : 'border-transparent hover:bg-muted/50'}`}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`text-xs font-bold uppercase ${STATUS_COLORS[r.status]}`}>{STATUS_LABELS[r.status]}</span>
-                        {r.assignedToUserId && <span className="text-[10px] text-muted-foreground">• {r.assignedToUserId}</span>}
-                      </div>
-                      <div className="text-sm font-medium truncate">{r.customer.name || r.customer.email || 'Unknown'}</div>
-                      <div className="text-xs text-muted-foreground truncate">{r.latestMessage || 'No messages'}</div>
-                      <div className="text-[10px] text-muted-foreground mt-1">{new Date(r.lastActivityAt || r.createdAt).toLocaleString()}</div>
-                    </div>
-                  </a>
-                ))
-              )}
-            </div>
-            {nextCursor && (
-              <div className="p-2">
-                <a
-                  href={buildUrl({ ...baseParams, cursor: nextCursor })}
-                  className="w-full px-4 py-2 text-sm border rounded hover:bg-muted block"
-                >
-                  Load more
-                </a>
-              </div>
-            )}
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="px-4 py-3 border-b flex items-center justify-between">
+            <h2 className="text-sm font-bold">Conversations</h2>
+            <span className="text-xs font-medium text-muted-foreground">{rooms.length}</span>
           </div>
-
-          <Separator orientation="vertical" className="h-full" />
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {!selectedRoomId ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-                <h2 className="text-lg font-medium mb-2">Select a conversation</h2>
-                <p className="text-sm">Pick a conversation from the list to view transcript and respond.</p>
-              </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            {rooms.length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground text-sm">No conversations</div>
             ) : (
-              <div className="flex flex-col h-full">
-                <div className="px-4 py-3 border-b flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-bold">{selectedRoom?.customer.name || 'Conversation'}</h2>
-                    <p className="text-xs text-muted-foreground">{selectedRoom?.customer.email || ''}</p>
+              rooms.map((r) => (
+                <a
+                  key={r.id}
+                  href={buildUrl({ ...baseParams, room: r.id, cursor: undefined })}
+                  className="block p-3 rounded-lg border transition-colors border-transparent hover:bg-muted/50"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-xs font-bold uppercase ${STATUS_COLORS[r.status]}`}>{STATUS_LABELS[r.status]}</span>
+                      {r.assignedToUserId && <span className="text-[10px] text-muted-foreground">• {r.assignedToUserId}</span>}
+                    </div>
+                    <div className="text-sm font-medium truncate">{r.customer.name || r.customer.email || 'Unknown'}</div>
+                    <div className="text-xs text-muted-foreground truncate">{r.latestMessage || 'No messages'}</div>
+                    <div className="text-[10px] text-muted-foreground mt-1">{new Date(r.lastActivityAt || r.createdAt).toLocaleString()}</div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {selectedRoom && selectedRoom.status === 'LIVE' && (
-                      <form action={async () => {
-                        await onReturnToBot(selectedRoom.id)
-                        window.location.reload()
-                      }} className="inline">
-                        <button className="px-3 py-1.5 text-xs border rounded bg-amber-50 text-amber-700 hover:bg-amber-100">Return to Bot</button>
-                      </form>
-                    )}
-                    {selectedRoom && selectedRoom.status === 'LIVE' && (
-                      <form action={async () => {
-                        await onCloseConversation(selectedRoom.id)
-                        window.location.reload()
-                      }} className="inline">
-                        <button className="px-3 py-1.5 text-xs border rounded bg-red-50 text-red-700 hover:bg-red-100">Close</button>
-                      </form>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  <p className="text-sm text-muted-foreground text-center py-10">
-                    Messages are displayed in the conversation view. Select a conversation to see its transcript.
-                  </p>
-                </div>
-              </div>
+                </a>
+              ))
             )}
           </div>
-
-          {customerAnswers && (
-            <div className="w-[320px] border-l border-border bg-muted/50 flex flex-col overflow-hidden">
-              <div className="px-4 py-3 border-b"><h2 className="text-sm font-bold">Lead Details</h2></div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                <div>
-                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-2">Contact</h3>
-                  <p className="text-sm">{customerAnswers.email}</p>
-                  {customerAnswers.name && <p className="text-sm">{customerAnswers.name}</p>}
-                  {customerAnswers.phone && <p className="text-sm">{customerAnswers.phone}</p>}
-                </div>
-                <div>
-                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-2">Answers</h3>
-                  {customerAnswers.questions?.length ? (
-                    customerAnswers.questions.map((q: any) => (
-                      <div key={q.id} className="mb-3">
-                        <div className="text-[10px] font-bold text-muted-foreground uppercase mb-1">{q.question}</div>
-                        <div className="text-sm text-muted-foreground">{q.answered || '—'}</div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-[10px] text-muted-foreground">No answers yet</p>
-                  )}
-                </div>
-              </div>
+          {nextCursor && (
+            <div className="p-2">
+              <a
+                href={buildUrl({ ...baseParams, cursor: nextCursor })}
+                className="w-full px-4 py-2 text-sm border rounded hover:bg-muted block"
+              >
+                Load more
+              </a>
             </div>
           )}
         </div>

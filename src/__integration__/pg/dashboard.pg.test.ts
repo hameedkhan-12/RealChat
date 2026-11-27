@@ -172,9 +172,11 @@ describe('dashboard message and questionnaire access (real PostgreSQL)', () => {
     await seedDomainMember({ domainId: domain.id, userId: userId, role: 'AGENT' })
 
     const customer = await seedCustomer({ domainId: domain.id })
+    const room = await seedRoom({ id: uid(), domainId: domain.id, customerId: customer.id, status: 'BOT' })
     await client.customerResponses.create({
       data: {
         id: uid(),
+        roomId: room.id,
         customerId: customer.id,
         stepKey: 'name',
         question: 'What is your name?',

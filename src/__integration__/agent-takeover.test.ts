@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const mockUpdateMany = vi.fn()
+const mockFindFirst = vi.fn()
 const mockFindUnique = vi.fn()
 const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
 
@@ -9,6 +10,7 @@ vi.mock('@/lib/prisma', () => ({
     chatRoom: {
       updateMany: mockUpdateMany,
       findUnique: mockFindUnique,
+      findFirst: mockFindFirst,
     },
   },
 }))
@@ -43,15 +45,14 @@ describe('agent takeover', () => {
     vi.clearAllMocks()
     mockRateLimit.mockResolvedValue({ success: true })
     mockUpdateMany.mockResolvedValue({ count: 1 })
+    mockFindFirst.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'WAITING_AGENT', assignedToUserId: null })
     mockFindUnique.mockResolvedValue({ id: 'room-1', status: 'LIVE', assignedToUserId: 'agent-1' })
   })
 
   it('atomically claims an unassigned WAITING_AGENT room', async () => {
-    mockUpdateMany.mockResolvedValue({ count: 1 })
     const { POST } = await import('@/app/api/agent/takeover/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
     expect(res.status).toBe(200)
-    // updateMany called with domainId + WAITING_AGENT filter + unassigned check
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: {
         id: 'room-1',
@@ -69,7 +70,7 @@ describe('agent takeover', () => {
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
     expect(res.status).toBe(409)
     const json = await res.json()
-    expect(json.error).toBe('ROOM_NOT_CLAIMABLE')
+    expect(json.error).toBe('TAKEOVER_CONFLICT')
   })
 
   it('rejects missing domainId', async () => {

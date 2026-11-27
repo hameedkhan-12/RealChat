@@ -34,7 +34,7 @@ export default async function KnowledgePage({
     <>
       <InfoBar />
       <div className="overflow-y-auto w-full chat-window flex-1 h-0">
-        <KnowledgeClient domainId={domainId} domains={domains} initialItems={items} />
+        <KnowledgeClient key={domainId} domainId={domainId} domains={domains} initialItems={items} />
       </div>
     </>
   )

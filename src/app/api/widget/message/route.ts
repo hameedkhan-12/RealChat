@@ -4,7 +4,7 @@ import { handle, readJson, assertSameOrigin, HttpError } from '@/lib/http'
 import { rateLimit, getClientIp } from '@/lib/rate-limit'
 import { requireWidgetSession } from '@/lib/widget-auth'
 import { MessageBody } from '@/lib/validation'
-import { advanceFlow } from '@/server/flow'
+import { advanceFlow, type FlowAnswer } from '@/server/flow'
 import { generateGroundedAnswer } from '@/server/ai-answer'
 import { retrieveKnowledge } from '@/server/knowledge-retrieval'
 import { getPusherServer, roomChannel } from '@/lib/pusher-server'
@@ -34,70 +34,154 @@ export const POST = handle(async (req: Request): Promise<Response> => {
           data: { consentAt: new Date() },
         })
       }
-      return await handleFlowStep(room, await advanceFlow(room.domainId, room.currentStepKey, undefined))
+      return await handleFlowStep(room, await advanceFlow(client, room.domainId, room.currentStepKey, undefined))
     }
 
     case 'FLOW_ANSWER': {
       if (room.status !== 'BOT') throw new HttpError(403, 'NOT_IN_BOT_MODE')
       if (!room.consentAt) throw new HttpError(403, 'CONSENT_REQUIRED')
+      if (!room.customer) throw new HttpError(403, 'NO_CUSTOMER')
+
       // Stale submission guard: client stepKey must match server-owned currentStepKey
       if (room.currentStepKey && input.stepKey !== room.currentStepKey) {
         throw new HttpError(409, 'STALE_SUBMISSION')
       }
-      const result = await advanceFlow(room.domainId, room.currentStepKey, input.answer)
-      if (result.kind === 'step') {
-        const currentStep = await client.flowStep.findFirst({
-          where: { domainId: room.domainId, key: room.currentStepKey ?? result.step.key },
+
+      const result = await client.$transaction(async (tx) => {
+        // Idempotency: if a response already exists for this room+step, return saved state
+        const existing = await tx.customerResponses.findUnique({
+          where: { roomId_stepKey: { roomId: room.id, stepKey: input.stepKey } },
+          select: { stepKey: true, answered: true },
         })
-        if (currentStep && room.customer) {
-          // Idempotent: skip if response already exists for this customer+step
-          const existing = await client.customerResponses.findUnique({
-            where: { customerId_stepKey: { customerId: room.customer.id, stepKey: currentStep.key } },
+        if (existing) {
+          const currentStep = await tx.flowStep.findFirst({
+            where: { domainId: room.domainId, key: input.stepKey },
+            select: { key: true, prompt: true, type: true, required: true, options: true },
           })
-          if (!existing) {
-            await client.customerResponses.create({
-              data: {
-                customerId: room.customer.id,
-                stepKey: currentStep.key,
-                question: currentStep.prompt,
-                answered: input.answer == null ? null : Array.isArray(input.answer) ? input.answer.join(', ') : String(input.answer),
-              },
-            })
-            if (currentStep.mapsTo !== 'NONE' && input.answer != null) {
-              const updateData: Record<string, string> = {}
-              const val = Array.isArray(input.answer) ? input.answer.join(', ') : String(input.answer)
-              if (currentStep.mapsTo === 'NAME') updateData.name = val
-              if (currentStep.mapsTo === 'EMAIL') updateData.email = val
-              if (currentStep.mapsTo === 'PHONE') updateData.phone = val
-              await client.customer.update({ where: { id: room.customer.id }, data: updateData })
-            }
+          return {
+            kind: 'step' as const,
+            step: currentStep
+              ? {
+                  key: currentStep.key,
+                  question: currentStep.prompt,
+                  type: currentStep.type,
+                  required: currentStep.required,
+                  options: Array.isArray(currentStep.options)
+                    ? (currentStep.options as { value: string }[]).map((o) => o.value)
+                    : null,
+                }
+              : null,
+            savedAnswer: { stepKey: input.stepKey, answer: existing.answered },
+            alreadyAnswered: true,
           }
         }
-        await client.chatRoom.update({
-          where: { id: room.id },
-          data: { currentStepKey: result.step.key, lastActivityAt: new Date() },
-        })
-        const botMsg = await client.chatMessage.create({
-          data: {
-            chatRoomId: room.id,
-            message: result.step.prompt,
-            senderType: 'BOT',
-            kind: 'FLOW_PROMPT',
-          },
-        })
-        await publishMessageEvent(room.id, botMsg.id)
+
+        // Validate answer against current step using flow engine (inside transaction)
+        const flowResult = await advanceFlow(tx, room.domainId, room.currentStepKey, input.answer as FlowAnswer)
+
+        const normalizeAnswer = (a: typeof input.answer) =>
+          a == null ? null : Array.isArray(a) ? a.join(', ') : String(a)
+
+        if (flowResult.kind === 'step') {
+          const step = flowResult.step
+
+          // Upsert answer (idempotent via compound unique constraint roomId_stepKey)
+          await tx.customerResponses.upsert({
+            where: { roomId_stepKey: { roomId: room.id, stepKey: input.stepKey! } },
+            create: {
+              roomId: room.id,
+              customerId: room.customer!.id,
+              stepKey: input.stepKey!,
+              question: step.prompt,
+              answered: normalizeAnswer(input.answer),
+            },
+            update: {
+              answered: normalizeAnswer(input.answer),
+            },
+          })
+
+          // Update customer name/email/phone if mapsTo
+          if (step.mapsTo !== 'NONE' && input.answer != null) {
+            const val = normalizeAnswer(input.answer) as string
+            const updateData: Record<string, string> = {}
+            if (step.mapsTo === 'NAME') updateData.name = val
+            if (step.mapsTo === 'EMAIL') updateData.email = val
+            if (step.mapsTo === 'PHONE') updateData.phone = val
+            await tx.customer.update({ where: { id: room.customer!.id }, data: updateData })
+          }
+
+          // Advance step
+          await tx.chatRoom.update({
+            where: { id: room.id },
+            data: { currentStepKey: step.key, lastActivityAt: new Date() },
+          })
+
+          // Create bot message for next step
+          const botMsg = await tx.chatMessage.create({
+            data: {
+              chatRoomId: room.id,
+              message: step.prompt,
+              senderType: 'BOT',
+              kind: 'FLOW_PROMPT',
+            },
+          })
+
+          return {
+            kind: 'step' as const,
+            step: {
+              key: step.key,
+              question: step.prompt,
+              type: step.type,
+              required: step.required,
+              options: step.options ? step.options.map((o) => o.value) : undefined,
+            },
+            savedAnswer: { stepKey: input.stepKey, answer: input.answer },
+            botMessageId: botMsg.id,
+          }
+        } else {
+          // Flow complete: persist final answer, set flowCompletedAt (status stays BOT)
+          await tx.customerResponses.upsert({
+            where: { roomId_stepKey: { roomId: room.id, stepKey: input.stepKey } },
+            create: {
+              roomId: room.id,
+              customerId: room.customer.id,
+              stepKey: input.stepKey,
+              question: '',
+              answered: normalizeAnswer(input.answer),
+            },
+            update: {
+              answered: normalizeAnswer(input.answer),
+            },
+          })
+
+          await tx.chatRoom.update({
+            where: { id: room.id },
+            data: { flowCompletedAt: new Date(), lastActivityAt: new Date() },
+          })
+
+          return { kind: 'complete' as const, savedAnswer: { stepKey: input.stepKey!, answer: input.answer } }
+        }
+      })
+
+      if (result.kind === 'step') {
+        await publishMessageEvent(room.id, result.botMessageId as string)
         return NextResponse.json({
           ok: true,
-          room: { status: room.status },
-          messages: [{ id: botMsg.id, senderType: 'BOT', kind: 'FLOW_PROMPT', content: result.step.prompt }],
-          currentStep: result.step,
           flowCompleted: false,
+          currentStep: result.step ?? undefined,
+          savedAnswer: result.savedAnswer,
+          room: { status: room.status },
+          messages: [
+            {
+              id: result.botMessageId,
+              senderType: 'BOT',
+              kind: 'FLOW_PROMPT',
+              content: result.step?.question ?? '',
+            },
+          ],
         })
       }
-      await client.chatRoom.update({
-        where: { id: room.id },
-        data: { flowCompletedAt: new Date(), lastActivityAt: new Date() },
-      })
+
       const chatBot = await client.chatBot.findUnique({ where: { domainId: room.domainId } })
       const actions = []
       if (chatBot?.bookingEnabled) actions.push({ type: 'book', label: 'Book a call' })
@@ -105,10 +189,11 @@ export const POST = handle(async (req: Request): Promise<Response> => {
       actions.push({ type: 'finish', label: 'No thanks' })
       return NextResponse.json({
         ok: true,
+        flowCompleted: true,
+        currentStep: null,
+        savedAnswer: result.savedAnswer,
         room: { status: room.status },
         messages: [],
-        currentStep: null,
-        flowCompleted: true,
         actions,
       })
     }
@@ -130,10 +215,14 @@ export const POST = handle(async (req: Request): Promise<Response> => {
         question: input.content,
       })
 
+      // Determine locale: visitor preference -> app fallback ('en')
+      const locale = input.locale || 'en'
+
       // Generate grounded AI answer using only retrieved knowledge
       const aiResult = await generateGroundedAnswer({
         question: input.content,
         knowledge: retrieval.candidates,
+        locale,
       })
 
       // Atomically claim the room for AI response and persist the AI message in one

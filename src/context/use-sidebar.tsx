@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import React from 'react'
 import { useEffect, useState } from 'react'
 import { useChatContext } from './user-chat-context'
-import { onGetConversationMode, onToggleRealtime } from '@/actions/conversation'
+import { onGetConversationMode, onReturnToBot, onTakeoverConversation } from '@/actions/conversation'
 import { useClerk } from '@clerk/nextjs'
 
 const useSideBar = () => {
@@ -26,14 +26,24 @@ const okChatRoom = (res: any) => res && res.ok && typeof res.data === 'object' ?
 const onActivateRealtime = async (e: any) => {
   try {
     const isLive = e.target.ariaChecked == 'true'
-    const realtime = await onToggleRealtime(chatRoom!, isLive ? 'BOT' : 'LIVE')
-    if (realtime?.ok) {
-      const cr = okChatRoom(realtime)
-      setRealtime(!!(cr?.live))
-      toast({
-        title: 'Success',
-        description: okMessage(realtime),
-      })
+    if (isLive) {
+      const res = await onReturnToBot(chatRoom!)
+      if (res?.ok) {
+        setRealtime(false)
+        toast({
+          title: 'Success',
+          description: 'Returned to bot',
+        })
+      }
+    } else {
+      const res = await onTakeoverConversation(chatRoom!)
+      if (res?.ok) {
+        setRealtime(true)
+        toast({
+          title: 'Success',
+          description: 'Conversation taken over',
+        })
+      }
     }
   } catch (error) {
     console.log(error)

@@ -28,10 +28,17 @@ export const MessageBody = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('CONSENT'), accepted: z.boolean() }),
   z.object({
     kind: z.literal('FLOW_ANSWER'),
-    stepKey: z.string().max(60),
-    answer: z.union([z.string().max(2000), z.array(z.string().max(200)).max(20), z.null()]),
+    stepKey: z.string().trim().min(1).max(60),
+    answer: z.union([
+      z.string().max(2000),
+      z.array(z.string().max(200)).max(20),
+      z.number(),
+      z.boolean(),
+      z.null(),
+    ]),
+    idempotencyKey: z.string().trim().min(1).max(128).optional(),
   }),
-  z.object({ kind: z.literal('QUESTION'), content: z.string().trim().min(1).max(2000) }),
+  z.object({ kind: z.literal('QUESTION'), content: z.string().trim().min(1).max(2000), locale: z.string().min(2).max(10).optional() }),
 ])
 
 export const HandoffBody = z.object({ reason: z.string().trim().max(300).optional() })
@@ -57,6 +64,53 @@ export const ManageCancelBody = z.object({
 export const FlowStepTypeSchema = z.enum(['CHOICE', 'MULTI_CHOICE', 'TEXT', 'NUMBER', 'EMAIL', 'PHONE'])
 export const FlowStepMapsToSchema = z.enum(['NONE', 'NAME', 'EMAIL', 'PHONE'])
 
+/** Shared widget config contract used by both API and client. */
+export const WidgetConfigSchema = z.object({
+  ok: z.literal(true),
+  domain: z.object({
+    publicKey: z.string(),
+    name: z.string(),
+    timezone: z.string(),
+    defaultLocale: z.string(),
+  }),
+  brand: z.object({
+    name: z.string(),
+    logoUrl: z.string().nullable(),
+    primaryColor: z.string().nullable(),
+    textColor: z.string().nullable(),
+    avatarUrl: z.string().nullable(),
+    position: z.string().nullable(),
+    welcomeMessage: z.string().nullable(),
+    consentText: z.string().nullable(),
+    privacyPolicyUrl: z.string().nullable(),
+    offlineMessage: z.string().nullable(),
+    showPoweredBy: z.boolean(),
+    launcherLabel: z.string().nullable(),
+  }),
+  features: z.object({
+    questionnaire: z.boolean(),
+    handoff: z.boolean(),
+    booking: z.boolean(),
+  }),
+  turnstile: z.object({
+    enabled: z.boolean(),
+    siteKey: z.string().nullable(),
+  }),
+  flow: z.object({
+    version: z.number(),
+    steps: z.array(
+      z.object({
+        key: z.string(),
+        question: z.string(),
+        type: z.string(),
+        required: z.boolean(),
+        options: z.array(z.string()).optional(),
+      }),
+    ),
+  }),
+})
+export type WidgetConfigResponse = z.infer<typeof WidgetConfigSchema>
+
 export const FlowStepOptionSchema = z.object({
   label: z.string().trim().min(1).max(200),
   value: z.string().trim().min(1).max(200),
@@ -73,6 +127,42 @@ export const FlowStepUpsertSchema = z.object({
   mapsTo: FlowStepMapsToSchema,
   isActive: z.boolean(),
 })
+
+/** Shared widget questionnaire answer contract (used by API and client). */
+export const FlowAnswerRequestSchema = z.object({
+  type: z.literal('FLOW_ANSWER'),
+  stepKey: z.string().trim().min(1).max(60),
+  answer: z.union([
+    z.string().max(2000),
+    z.array(z.string().max(200)).max(20),
+    z.number(),
+    z.boolean(),
+    z.null(),
+  ]),
+  idempotencyKey: z.string().trim().min(1).max(128).optional(),
+})
+
+export type FlowAnswerRequest = z.infer<typeof FlowAnswerRequestSchema>
+
+export const FlowAnswerStepSchema = z.object({
+  key: z.string(),
+  question: z.string(),
+  type: z.string(),
+  required: z.boolean(),
+  options: z.array(z.string()).optional(),
+})
+
+export const FlowAnswerResponseSchema = z.object({
+  ok: z.literal(true),
+  flowCompleted: z.boolean(),
+  currentStep: FlowAnswerStepSchema.nullable(),
+  savedAnswer: z.object({
+    stepKey: z.string(),
+    answer: z.unknown(),
+  }),
+})
+
+export type FlowAnswerResponse = z.infer<typeof FlowAnswerResponseSchema>
 
 export const isHexColor = (v?: string | null) => !v || /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)
 export const isHttpsUrl = (v?: string | null) => {

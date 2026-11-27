@@ -1,8 +1,8 @@
 'use client'
 
 import { onGetKnowledgeItems, onUpsertKnowledgeItem, onDeleteKnowledgeItem } from '@/actions/knowledge'
-import InfoBar from '@/components/infobar'
-import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useState } from 'react'
 
 type KnowledgeItem = {
   id: string
@@ -25,8 +25,8 @@ export function KnowledgeClient({
   domains,
   initialItems,
 }: KnowledgeClientProps) {
+  const router = useRouter()
   const [items, setItems] = useState<KnowledgeItem[]>(initialItems)
-  const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<KnowledgeItem | null>(null)
   const [form, setForm] = useState<{
     title: string
@@ -39,24 +39,6 @@ export function KnowledgeClient({
     category: '',
     isActive: true,
   })
-
-  useEffect(() => {
-    console.log('useEffect: domainId =', domainId)
-    if (!domainId) {
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    onGetKnowledgeItems(domainId)
-      .then((res: any) => {
-        console.log('onGetKnowledgeItems resolved:', res)
-        if (res?.ok) setItems((res.data as any).items ?? [])
-      })
-      .finally(() => {
-        console.log('finally called, setLoading(false)')
-        setLoading(false)
-      })
-  }, [domainId])
 
   const onAdd = () => setForm({ title: '', content: '', category: '', isActive: true })
 
@@ -102,12 +84,9 @@ export function KnowledgeClient({
     }
   }
 
-  if (loading) return <div className="p-6 text-muted-foreground">Loading…</div>
-
   return (
     <>
-      <InfoBar />
-      <div className="overflow-y-auto w-full chat-window flex-1 h-0">
+      <div className="w-full">
         <div className="p-6">
           <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
@@ -119,7 +98,7 @@ export function KnowledgeClient({
                 defaultValue={domainId}
                 onChange={(e) => {
                   const id = (e.target as HTMLSelectElement).value
-                  if (id) window.location.href = `?domain=${id}`
+                  if (id) router.push(`?domain=${id}`)
                 }}
                 className="border rounded px-2 py-1.5 text-sm"
               >

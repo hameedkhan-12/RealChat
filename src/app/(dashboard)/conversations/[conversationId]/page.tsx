@@ -1,5 +1,5 @@
 import { client } from '@/lib/prisma'
-import { onGetChatMessages, onGetCustomerAnswers } from '@/actions/conversation'
+import { onGetChatMessages, onGetCustomerAnswers, onTakeoverConversation, onCloseConversation, onReturnToBot } from '@/actions/conversation'
 import { requireResourceAccess } from '@/lib/auth'
 import InfoBar from '@/components/infobar'
 import { ConversationHeader } from '@/components/dashboard/conversations/conversation-header'
@@ -32,6 +32,7 @@ export default async function ConversationDetailPage({
       customerId: true,
       lastActivityAt: true,
       createdAt: true,
+      flowCompletedAt: true,
     },
   })
 
@@ -62,7 +63,7 @@ export default async function ConversationDetailPage({
 
   const answersData = answersRes?.ok ? (answersRes.data as any) : null
   const questions = answersData?.questions ?? []
-  const flowCompleted = !!answersData?.consentAt
+  const flowCompletedAt = room.flowCompletedAt
 
   const disabled = !(room.status === 'LIVE' && room.assignedToUserId)
 
@@ -80,7 +81,7 @@ export default async function ConversationDetailPage({
               lastActivityAt: room.lastActivityAt,
               createdAt: room.createdAt,
               customer,
-              flowCompletedAt: flowCompleted ? room.lastActivityAt : null,
+              flowCompletedAt: room.flowCompletedAt,
               assignedAgent,
             }}
           />
@@ -107,7 +108,7 @@ export default async function ConversationDetailPage({
               chatRooms: answersData?.chatRooms ?? [],
             }}
             questions={questions}
-            flowCompletedAt={flowCompleted ? room.lastActivityAt : null}
+            flowCompletedAt={room.flowCompletedAt}
           />
         </div>
       </div>

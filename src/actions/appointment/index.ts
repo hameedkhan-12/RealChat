@@ -119,9 +119,16 @@ export const onBookNewAppointment = async (
 export const saveAnswers = async (questions: Record<string, string>, customerId: string): Promise<ActionResult> => {
   return action(async () => {
     const access = await requireResourceAccess('customer', customerId, 'AGENT')
+    const room = await client.chatRoom.findFirst({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    })
+    const roomId = room?.id
+    if (!roomId) return { ok: false, error: 'NO_ROOM', status: 404 }
     for (const [stepKey, answered] of Object.entries(questions || {})) {
       await client.customerResponses.create({
-        data: { customerId, stepKey, question: stepKey, answered },
+        data: { roomId, customerId, stepKey, question: stepKey, answered },
       })
     }
     return { ok: true, data: { saved: true, domainId: access.domainId } }

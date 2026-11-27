@@ -83,7 +83,7 @@ describe('agent messaging (real PostgreSQL)', () => {
 
     setClerk(clerkId)
     const res = await agentMessage(makeReq(domain.id, room.id, 'Hello'))
-    expect(res.status).toBe(409)
+    expect(res.status).toBe(403)
   })
 
   it('agent cannot send messages in a WAITING_AGENT conversation', async () => {
@@ -94,7 +94,7 @@ describe('agent messaging (real PostgreSQL)', () => {
 
     setClerk(clerkId)
     const res = await agentMessage(makeReq(domain.id, room.id, 'Hello'))
-    expect(res.status).toBe(409)
+    expect(res.status).toBe(403)
   })
 
   it('agent cannot send messages in a closed conversation', async () => {
@@ -105,7 +105,7 @@ describe('agent messaging (real PostgreSQL)', () => {
 
     setClerk(clerkId)
     const res = await agentMessage(makeReq(domain.id, room.id, 'Hello'))
-    expect(res.status).toBe(409)
+    expect(res.status).toBe(403)
   })
 
   it('client cannot spoof the sender role; server always uses AGENT', async () => {

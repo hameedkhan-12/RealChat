@@ -6,6 +6,25 @@ import { action } from '@/lib/action'
 import { logger } from '@/lib/logger'
 import { z } from 'zod'
 
+/**
+ * KnowledgeItem vs HelpDesk relationship (documented per R8 acceptance):
+ *
+ * KnowledgeItem is the CANONICAL source for AI knowledge retrieval.
+ *   - Used by retrieveKnowledge() in src/server/knowledge-retrieval.ts
+   *   - Used by generateGroundedAnswer() in src/server/ai-answer.ts
+   *   - Managed via onUpsertKnowledgeItem / onDeleteKnowledgeItem below
+   *   - Tenant-scoped, isActive flag controls visibility
+ *
+ * HelpDesk is a SEPARATE FAQ model (src/prisma/schema.prisma HelpDesk).
+ *   - NOT used by AI retrieval; serves as a standalone dashboard FAQ.
+ *   - No write path to/from KnowledgeItem exists by design.
+ *   - Future work: either migrate HelpDesk items into KnowledgeItem or
+   *   remove HelpDesk to avoid duplicate stores.
+ *
+ * Do not read from both stores in AI paths. Use KnowledgeItem exclusively
+ * for AI answer generation.
+ */
+
 export type ActionResult<T = unknown> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number; issues?: { path: string; message: string }[] }

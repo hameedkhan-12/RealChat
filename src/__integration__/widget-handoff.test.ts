@@ -1,16 +1,25 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { client } from '@/lib/prisma'
+import { rateLimit } from '@/lib/rate-limit'
 import { requireWidgetSession } from '@/lib/widget-auth'
-
-const mockUpdateMany = vi.fn()
-const mockFindUnique = vi.fn()
-const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
 
 vi.mock('@/lib/prisma', () => ({
   client: {
-    chatRoom: { findUnique: mockFindUnique, updateMany: mockUpdateMany },
+    chatRoom: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    chatMessage: { create: vi.fn(), findMany: vi.fn() },
+    flowStep: { findMany: vi.fn(), findFirst: vi.fn() },
+    customerResponses: { findUnique: vi.fn(), upsert: vi.fn(), create: vi.fn() },
+    customer: { update: vi.fn() },
+    chatBot: { findUnique: vi.fn() },
+    knowledgeItem: { findMany: vi.fn() },
+    $transaction: vi.fn(async (cb) => cb(client)),
   },
 }))
-vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () => '1.2.3.4' }))
+vi.mock('@/lib/rate-limit', () => ({ rateLimit: vi.fn().mockResolvedValue({ success: true }), getClientIp: () => '1.2.3.4' }))
 vi.mock('@/lib/widget-auth', () => ({
   requireWidgetSession: vi.fn(() => Promise.resolve({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'BOT', consentAt: new Date(), currentStepKey: null } })),
 }))
@@ -43,9 +52,9 @@ function setRoom(currentStepKey: string | null, consentAt = new Date(), status: 
 describe('widget handoff', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockRateLimit.mockResolvedValue({ success: true })
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null })
-    mockUpdateMany.mockResolvedValue({ count: 1 })
+    ;(client.chatRoom.findUnique as any).mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null })
+    ;(client.chatRoom.findFirst as any).mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null })
+    ;(client.chatRoom.updateMany as any).mockResolvedValue({ count: 1 })
   })
 
   it('transitions BOT room to WAITING_AGENT on handoff', async () => {
@@ -55,25 +64,23 @@ describe('widget handoff', () => {
     const json = await res.json()
     expect(json.ok).toBe(true)
     expect(json.status).toBe('WAITING_AGENT')
-    expect(mockUpdateMany).toHaveBeenCalledWith({
+    expect(client.chatRoom.updateMany).toHaveBeenCalledWith({
       where: { id: 'room-1', domainId: 'domain-1', status: 'BOT' },
       data: { status: 'WAITING_AGENT', lastActivityAt: expect.any(Date) },
     })
   })
 
   it('is idempotent: repeated handoff on already WAITING_AGENT room returns current state', async () => {
-    mockUpdateMany.mockClear()
+    ;(client.chatRoom.updateMany as any).mockClear()
     vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'WAITING_AGENT', consentAt: new Date(), currentStepKey: null } } as any)
+    ;(client.chatRoom.findFirst as any).mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'WAITING_AGENT', consentAt: new Date(), currentStepKey: null })
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res1 = await POST(makeReq())
     expect(res1.status).toBe(200)
     const json1 = await res1.json()
     expect(json1.ok).toBe(true)
     expect(json1.status).toBe('WAITING_AGENT')
-    // updateMany should NOT be called for already-waiting room
-    expect(mockUpdateMany).not.toHaveBeenCalled()
-
-    // Second request still returns success
+    expect(client.chatRoom.updateMany).not.toHaveBeenCalled()
     const res2 = await POST(makeReq())
     expect(res2.status).toBe(200)
     const json2 = await res2.json()
@@ -83,6 +90,7 @@ describe('widget handoff', () => {
 
   it('rejects handoff from CLOSED room', async () => {
     vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'CLOSED', consentAt: new Date(), currentStepKey: null } } as any)
+    ;(client.chatRoom.findFirst as any).mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'CLOSED', consentAt: new Date(), currentStepKey: null })
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res = await POST(makeReq())
     expect(res.status).toBe(409)
@@ -90,13 +98,17 @@ describe('widget handoff', () => {
 
   it('rejects handoff from LIVE room', async () => {
     vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', domain: { notificationEmails: [] }, status: 'LIVE', consentAt: new Date(), currentStepKey: null } } as any)
+    ;(client.chatRoom.findFirst as any).mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'LIVE', consentAt: new Date(), currentStepKey: null })
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res = await POST(makeReq())
     expect(res.status).toBe(409)
   })
 
   it('rejects rate limited requests', async () => {
-    mockRateLimit.mockResolvedValue({ success: false })
+    ;(client.chatRoom.findUnique as any).mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null })
+    ;(client.chatRoom.findFirst as any).mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', consentAt: new Date(), currentStepKey: null })
+    ;(client.chatRoom.updateMany as any).mockResolvedValue({ count: 1 })
+    vi.mocked(rateLimit).mockResolvedValue({ success: false })
     const { POST } = await import('@/app/api/widget/handoff/route')
     const res = await POST(makeReq())
     expect(res.status).toBe(429)

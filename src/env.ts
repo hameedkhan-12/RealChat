@@ -20,6 +20,7 @@ const schema = z.object({
   WIDGET_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   TRUSTED_PROXY_COUNT: z.coerce.number().int().min(0).max(5).default(1),
   RETENTION_DAYS: z.coerce.number().int().min(30).max(3650).default(365),
+  SENTRY_DSN: optional,
 })
 
 const PROD_REQUIRED = [
@@ -28,6 +29,7 @@ const PROD_REQUIRED = [
   'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN',
   'TURNSTILE_SECRET_KEY', 'NEXT_PUBLIC_TURNSTILE_SITE_KEY',
   'SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'CRON_SECRET',
+  'SENTRY_DSN',
 ] as const
 
 export type Env = z.infer<typeof schema>

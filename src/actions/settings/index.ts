@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { csvRow } from '@/lib/csv'
 import { EmailSchema, FlowStepUpsertSchema } from '@/lib/validation'
 import { hashToken } from '@/lib/session'
+import { normalizeOrigins } from '@/lib/origins'
 import crypto from 'crypto'
 
 const generatePublicKey = () => crypto.randomBytes(18).toString('hex')
@@ -39,7 +40,7 @@ export const onIntegrateDomain = async (
         name: domain,
         icon,
         publicKey: generatePublicKey(),
-        allowedOrigins: allowedOrigins ?? [],
+        allowedOrigins: normalizeOrigins(allowedOrigins ?? []),
         timezone: timezone ?? 'UTC',
         members: { create: { userId: dbUser.id, role: 'OWNER' } },
         chatBot: { create: { welcomeMessage: 'Hi! How can we help you today?' } },
@@ -82,9 +83,7 @@ export const onGetAllAccountDomains = async () => {
                 id: true,
                 publicKey: true,
                 timezone: true,
-                customers: {
-                  select: { chatRooms: { select: { id: true, status: true } } },
-                },
+                createdAt: true,
               },
             },
           },
@@ -92,16 +91,17 @@ export const onGetAllAccountDomains = async () => {
       },
     })
     if (!dbUser) return { id: undefined, domains: [] }
-    const domains = dbUser.memberships.map((m) => ({
-      name: m.domain.name,
-      icon: m.domain.icon ?? '',
-      id: m.domain.id,
-      publicKey: m.domain.publicKey,
-      timezone: m.domain.timezone,
-      customer: m.domain.customers.map((c) => ({
-        chatRoom: c.chatRooms.map((r) => ({ id: r.id, live: r.status === 'LIVE' })),
-      })),
-    }))
+    const domains = dbUser.memberships
+      .map((m) => ({
+        name: m.domain.name,
+        icon: m.domain.icon ?? '',
+        id: m.domain.id,
+        publicKey: m.domain.publicKey,
+        timezone: m.domain.timezone,
+        createdAt: m.domain.createdAt,
+      }))
+      // Oldest first so the seeded / primary workspace is the default selection
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     return { id: dbUser.id, domains }
   } catch (error) {
     logger.error('onGetAllAccountDomains failed', { error: String(error) })
@@ -185,7 +185,7 @@ export const onChatBotImageUpdate = async (id: string, icon: string): Promise<Ac
 }
 
 export const onUpdateWelcomeMessage = async (message: string, domainId: string): Promise<ActionResult> => {
-  await requireDomainAccess(domainId)
+  await requireDomainAccess(domainId, 'OWNER')
   try {
     await client.domain.update({
       where: { id: domainId },
@@ -199,7 +199,7 @@ export const onUpdateWelcomeMessage = async (message: string, domainId: string):
 }
 
 export const onUpdateChatBotTheme = async (domainId: string, background?: string, textColor?: string): Promise<ActionResult> => {
-  await requireDomainAccess(domainId)
+  await requireDomainAccess(domainId, 'OWNER')
   try {
     await client.domain.update({
       where: { id: domainId },
@@ -234,7 +234,7 @@ export const onDeleteUserDomain = async (id: string): Promise<ActionResult> => {
 }
 
 export const onCreateHelpDeskQuestion = async (id: string, question: string, answer: string): Promise<ActionResult> => {
-  await requireDomainAccess(id)
+  await requireDomainAccess(id, 'OWNER')
   try {
     await client.helpDesk.create({ data: { domainId: id, question, answer } })
     const questions = await client.helpDesk.findMany({ where: { domainId: id }, select: { id: true, question: true, answer: true } })
@@ -302,14 +302,31 @@ export const onCreateNewDomainProduct = async (
 /* ============ TEAM / DOMAIN MEMBERS ============ */
 
 export const onGetDomainMembers = async (domainId: string): Promise<ActionResult> => {
-  await requireDomainAccess(domainId)
+  await requireDomainAccess(domainId, 'OWNER')
   try {
     const members = await client.domainMember.findMany({
       where: { domainId },
-      include: { user: { select: { id: true, fullname: true, clerkId: true } } },
+      select: {
+        id: true,
+        role: true,
+        userId: true,
+        createdAt: true,
+        user: { select: { fullname: true } },
+      },
       orderBy: { createdAt: 'asc' },
     })
-    return { ok: true, data: { members: members.map((m) => ({ id: m.id, role: m.role, userId: m.userId, fullname: m.user.fullname, clerkId: m.user.clerkId })) } }
+    return {
+      ok: true,
+      data: {
+        members: members.map((m) => ({
+          id: m.id,
+          role: m.role,
+          userId: m.userId,
+          fullname: m.user.fullname,
+          createdAt: m.createdAt,
+        })),
+      },
+    }
   } catch (error) {
     logger.error('onGetDomainMembers failed', { error: String(error), domainId })
     return { ok: false, error: 'Failed to load members', status: 500 }
@@ -327,8 +344,40 @@ export const onInviteAgent = async (domainId: string, email: string): Promise<Ac
       data: { domainId, email: emailInput, role: 'AGENT', tokenHash, expiresAt },
       select: { id: true, email: true, expiresAt: true },
     })
-    return { ok: true, data: { invite, token } }
+    // NOTE: The raw token is never returned to the client. It is sent via
+    // email to the invitee and verified server-side on acceptance.
+    return { ok: true, data: { invite } }
   })
+}
+
+export const onGetDomainInvites = async (domainId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId, 'OWNER')
+  try {
+    const invites = await client.domainInvite.findMany({
+      where: { domainId, acceptedAt: null },
+      select: { id: true, email: true, role: true, expiresAt: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    })
+    return { ok: true, data: { invites } }
+  } catch (error) {
+    logger.error('onGetDomainInvites failed', { error: String(error), domainId })
+    return { ok: false, error: 'Failed to load invitations', status: 500 }
+  }
+}
+
+export const onRevokeDomainInvite = async (domainId: string, inviteId: string): Promise<ActionResult> => {
+  await requireDomainAccess(domainId, 'OWNER')
+  try {
+    const invite = await client.domainInvite.findFirst({
+      where: { id: inviteId, domainId, acceptedAt: null },
+    })
+    if (!invite) return { ok: false, error: 'Invitation not found or already accepted', status: 404 }
+    await client.domainInvite.delete({ where: { id: inviteId } })
+    return { ok: true, data: { message: 'Invitation revoked' } }
+  } catch (error) {
+    logger.error('onRevokeDomainInvite failed', { error: String(error), domainId, inviteId })
+    return { ok: false, error: 'Failed to revoke invitation', status: 500 }
+  }
 }
 
 export const onRemoveTeamMember = async (domainId: string, memberId: string): Promise<ActionResult> => {
@@ -360,7 +409,7 @@ export const onGetAvailability = async (domainId: string): Promise<ActionResult>
 }
 
 export const onSetAvailabilityRule = async (domainId: string, weekday: number, startMinute: number, endMinute: number): Promise<ActionResult> => {
-  await requireDomainAccess(domainId)
+  await requireDomainAccess(domainId, 'OWNER')
   try {
     const existing = await client.availabilityRule.findFirst({ where: { domainId, weekday } })
     let rule
@@ -408,15 +457,50 @@ export const onSetAvailabilityException = async (domainId: string, date: string,
 
 /* ============ LEADS ============ */
 
-export const onGetLeads = async (domainId: string): Promise<ActionResult> => {
+export const onGetLeads = async (
+  domainId: string,
+  cursor?: string,
+  limit = 20
+): Promise<ActionResult> => {
   await requireDomainAccess(domainId)
+
+  const parsedLimit = Math.min(Math.max(limit, 1), 50)
+
+  const where: any = { domainId }
+
+  // Cursor-based pagination: (createdAt DESC, id DESC) lexicographic predicate
+  if (cursor) {
+    const [createdAt, id] = cursor.split('|')
+    where.OR = [
+      { createdAt: { lt: new Date(createdAt) } },
+      { createdAt: new Date(createdAt), id: { lt: id } },
+    ]
+  }
+
   try {
     const customers = await client.customer.findMany({
-      where: { domainId },
-      select: { id: true, email: true, name: true, phone: true, consentAt: true, createdAt: true, questions: { orderBy: { createdAt: 'asc' } } },
-      orderBy: { createdAt: 'desc' },
+      where,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        consentAt: true,
+        createdAt: true,
+        questions: { orderBy: { createdAt: 'asc' } },
+        chatRooms: { select: { id: true, status: true, createdAt: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: parsedLimit + 1,
     })
-    return { ok: true, data: { leads: customers } }
+
+    const hasMore = customers.length > parsedLimit
+    const items = hasMore ? customers.slice(0, parsedLimit) : customers
+    const nextCursor = hasMore
+      ? `${items[parsedLimit - 1].createdAt.toISOString()}|${items[parsedLimit - 1].id}`
+      : null
+
+    return { ok: true, data: { leads: items, nextCursor } }
   } catch (error) {
     logger.error('onGetLeads failed', { error: String(error), domainId })
     return { ok: false, error: 'Failed to load leads', status: 500 }
@@ -424,7 +508,7 @@ export const onGetLeads = async (domainId: string): Promise<ActionResult> => {
 }
 
 export const onDeleteLead = async (domainId: string, customerId: string): Promise<ActionResult> => {
-  await requireDomainAccess(domainId)
+  await requireDomainAccess(domainId, 'OWNER')
   try {
     const customer = await client.customer.findUnique({ where: { id: customerId } })
     if (!customer || customer.domainId !== domainId) return { ok: false, error: 'Lead not found', status: 404 }
@@ -482,7 +566,7 @@ export const onUpdateDomainSettings = async (domainId: string, allowedOrigins?: 
   try {
     const domain = await client.domain.update({
       where: { id: domainId },
-      data: { ...(allowedOrigins !== undefined && { allowedOrigins }), ...(timezone !== undefined && { timezone }) },
+      data: { ...(allowedOrigins !== undefined && { allowedOrigins: normalizeOrigins(allowedOrigins) }), ...(timezone !== undefined && { timezone }) },
     })
     return { ok: true, data: { domain } }
   } catch (error) {

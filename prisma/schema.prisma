@@ -187,6 +187,7 @@ model Customer {
 
 model CustomerResponses {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roomId     String   @db.Uuid
   customerId String   @db.Uuid
   stepKey    String                                   // REQUIRED
   question   String
@@ -194,9 +195,10 @@ model CustomerResponses {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt                       // NEW
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@unique([customerId, stepKey])                      // NEW
+  room       ChatRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  @@unique([roomId, stepKey])                      // NEW: compound constraint for idempotent upsert
   @@index([customerId])
+  @@index([roomId])
 }
 
 model ChatRoom {
@@ -223,6 +225,7 @@ model ChatRoom {
   customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)  // Cascade now
   assignedTo User?         @relation("AssignedAgent", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   messages   ChatMessage[]
+  responses  CustomerResponses[]
 
   @@index([domainId])
   @@index([customerId])

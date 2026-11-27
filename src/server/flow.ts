@@ -1,5 +1,6 @@
 import 'server-only'
 import { client } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 
 export type StepType = 'CHOICE' | 'MULTI_CHOICE' | 'TEXT' | 'NUMBER' | 'EMAIL' | 'PHONE'
 
@@ -13,13 +14,13 @@ export type FlowStep = {
   mapsTo: 'NONE' | 'NAME' | 'EMAIL' | 'PHONE'
 }
 
-export type FlowAnswer = string | string[] | null | undefined
+export type FlowAnswer = string | string[] | number | boolean | null | undefined
 
 export type FlowResult =
   | { kind: 'step'; step: FlowStep }
   | { kind: 'complete'; step?: FlowStep }
 
-function normalizeStep(s: any): FlowStep {
+function normalizeStep(s: { id: string; key: string; type: string; prompt: string; options: any; required: boolean; mapsTo: string }): FlowStep {
   return {
     id: s.id,
     key: s.key,
@@ -62,15 +63,17 @@ function isValidAnswer(type: StepType, answer: FlowAnswer, options: { value: str
 
 /**
  * Pure flow engine. State source of truth is room.currentStepKey (DB), never the client.
- * Validates the answer against the current step; only saves/advances on valid input.
+ * Validates the answer against the current step; only returns next step on valid input.
  * Optional steps with no answer are skipped.
+ * Runs inside an optional transaction client `tx` for atomicity.
  */
 export async function advanceFlow(
+  tx: Prisma.TransactionClient,
   domainId: string,
   currentStepKey: string | null,
   answer?: FlowAnswer
 ): Promise<FlowResult> {
-  const steps = await client.flowStep.findMany({
+  const steps = await tx.flowStep.findMany({
     where: { domainId, isActive: true },
     orderBy: { position: 'asc' },
     select: { id: true, key: true, type: true, prompt: true, options: true, required: true, mapsTo: true },
@@ -95,7 +98,7 @@ export async function advanceFlow(
     if (!current.required) {
       const nextKey = normalized[currentIndex + 1]?.key ?? null
       if (!nextKey) return { kind: 'complete' }
-      const nextStep = normalized.find((s) => s.key === nextKey)
+      const nextStep = normalized.find((s: FlowStep) => s.key === nextKey)
       return nextStep ? { kind: 'step', step: nextStep } : { kind: 'complete' }
     }
     return { kind: 'step', step: current }
@@ -109,14 +112,14 @@ export async function advanceFlow(
   // Determine next step
   let nextKey: string | null = null
   if (current.type === 'CHOICE' && current.options) {
-    const matched = current.options.find((o) => o.value === String(answer))
+    const matched = current.options.find((o: { value: string }) => o.value === String(answer))
     nextKey = matched?.nextStepKey ?? normalized[currentIndex + 1]?.key ?? null
   } else {
     nextKey = normalized[currentIndex + 1]?.key ?? null
   }
 
   if (!nextKey) return { kind: 'complete' }
-  const nextStep = normalized.find((s) => s.key === nextKey)
+  const nextStep = normalized.find((s: FlowStep) => s.key === nextKey)
   return nextStep ? { kind: 'step', step: nextStep } : { kind: 'complete' }
 }
 

@@ -1,0 +1,2 @@
+-- This migration was applied directly to the database before being recorded locally.
+-- Stub added to bring local history in sync.

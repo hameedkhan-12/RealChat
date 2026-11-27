@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { ConversationTranscript } from '@/components/dashboard/conversations/conversation-transcript'
 import { MessageComposer } from '@/components/dashboard/conversations/message-composer'
 import { useDashboardPusher } from '@/hooks/dashboard/use-dashboard-pusher'
+import type { MessageCreatedEvent } from '@/lib/conversation-events'
 
 type Message = {
   id: string
@@ -34,21 +35,41 @@ export function ConversationRealtime({
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [realtimeConnected, setRealtimeConnected] = useState(true)
   const [statusNotice, setStatusNotice] = useState<string | null>(null)
+  const [fetching, setFetching] = useState(false)
+  const pendingMessageIds = useRef<Set<string>>(new Set())
 
   const handlers = {
-    onMessageCreated: (data: { roomId: string; messageId: string }) => {
+    onMessageCreated: async (data: { roomId: string; messageId: string }) => {
       if (data.roomId !== conversationId) return
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `pending-${data.messageId}`,
-          senderType: 'AGENT',
-          message: '',
-          createdAt: new Date(),
-          seen: false,
-          senderUserId: null,
-        },
-      ])
+      // Deduplicate by messageId
+      if (pendingMessageIds.current.has(data.messageId)) return
+      pendingMessageIds.current.add(data.messageId)
+
+      setFetching(true)
+      try {
+        // Persist first, then publish: clients recover full state from the
+        // persisted message record via the messages API.
+        const res = await fetch(`/api/dashboard/conversations/${conversationId}/messages`)
+        if (!res.ok) return
+        const data = await res.json()
+        const items = data?.items ?? data?.messages ?? []
+        const newItem = items.find((m: any) => m.id === data.messageId)
+        if (!newItem) return
+
+        const msg: Message = {
+          id: newItem.id,
+          senderType: newItem.senderType as Message['senderType'],
+          message: newItem.message,
+          createdAt: new Date(newItem.createdAt),
+          seen: newItem.seen ?? false,
+          senderUserId: newItem.senderUserId ?? null,
+        }
+        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]))
+      } catch {
+        // Non-fatal; message is persisted in the DB regardless
+      } finally {
+        setFetching(false)
+      }
     },
     onRoomUpdated: (data: { roomId: string; status: string; assignedToUserId: string | null }) => {
       if (data.roomId !== conversationId) return
@@ -74,7 +95,7 @@ export function ConversationRealtime({
             {statusNotice}
           </div>
         )}
-        {messages.length === 0 && realtimeConnected ? (
+        {messages.length === 0 && realtimeConnected && !fetching ? (
           <div className="flex items-center justify-center text-muted-foreground text-sm p-8">
             No messages yet
           </div>
@@ -84,9 +105,9 @@ export function ConversationRealtime({
               messages={messages}
               assignedAgentId={assignedToUserId}
             />
-            {messages.some((m) => m.id.startsWith('pending-')) && (
+            {fetching && (
               <div className="text-[10px] text-muted-foreground text-center mt-2">
-                New message received — refresh to see content
+                Receiving new message…
               </div>
             )}
           </>

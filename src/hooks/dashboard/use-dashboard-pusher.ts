@@ -2,14 +2,13 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 import Pusher from 'pusher-js'
-
-function domainChannel(domainId: string) {
-  return `private-domain-${domainId}`
-}
-
-function roomChannel(roomId: string) {
-  return `private-room-${roomId}`
-}
+import {
+  CHANNEL,
+  ConversationEvent,
+  MessageCreatedEvent,
+  RoomUpdatedEvent,
+  HandoffRequestedEvent,
+} from '@/lib/conversation-events'
 
 type PusherEventHandlers = {
   onMessageCreated?: (data: { roomId: string; messageId: string }) => void
@@ -23,7 +22,7 @@ export function useDashboardPusher(
   handlers: PusherEventHandlers,
 ) {
   const pusherRef = useRef<Pusher | null>(null)
-  const channelRef = useRef<string | null>(null)
+  const subscribedChannels = useRef<Set<string>>(new Set())
   const handlersRef = useRef<PusherEventHandlers>(handlers)
 
   // Keep the handlers ref in sync with the latest handlers (outside render)
@@ -33,49 +32,57 @@ export function useDashboardPusher(
 
   const subscribe = useCallback(
     (pusher: Pusher, targetDomainId: string, targetRoomId?: string) => {
-      // Unsubscribe from previous channel
-      if (channelRef.current) {
-        try { pusher.unsubscribe(channelRef.current) } catch { /* ignore */ }
-        channelRef.current = null
-      }
+      // Track subscribed channels to avoid re-subscribing
+      const domainCh = CHANNEL.domain(targetDomainId)
 
-      // Subscribe to domain channel for domain-scoped events
-      const domainCh = domainChannel(targetDomainId)
-      const domainChannelRef = pusher.subscribe(domainCh)
-      channelRef.current = domainCh
+      if (!subscribedChannels.current.has(domainCh)) {
+        const domainChannelRef = pusher.subscribe(domainCh)
+        subscribedChannels.current.add(domainCh)
 
-      domainChannelRef.bind('client-message-created', (data: any) => {
-        handlersRef.current.onMessageCreated?.({ roomId: data.roomId, messageId: data.messageId })
-      })
-      domainChannelRef.bind('room.updated', (data: any) => {
-        if (targetRoomId && data.roomId !== targetRoomId) return
-        handlersRef.current.onRoomUpdated?.({
-          roomId: data.roomId,
-          status: data.status,
-          assignedToUserId: data.assignedToUserId ?? null,
+        domainChannelRef.bind('message.created', (data: MessageCreatedEvent) => {
+          handlersRef.current.onMessageCreated?.({
+            roomId: data.roomId,
+            messageId: data.messageId,
+          })
         })
-      })
-      domainChannelRef.bind('handoff.requested', (data: any) => {
-        if (targetRoomId && data.roomId !== targetRoomId) return
-        handlersRef.current.onHandoffRequested?.({ roomId: data.roomId, status: data.status })
-      })
-
-      // Subscribe to room channel if a specific room is open
-      if (targetRoomId) {
-        const roomCh = roomChannel(targetRoomId)
-        const roomChannelRef = pusher.subscribe(roomCh)
-        channelRef.current = roomCh
-
-        roomChannelRef.bind('message.created', (data: any) => {
-          handlersRef.current.onMessageCreated?.({ roomId: data.roomId, messageId: data.messageId })
-        })
-        roomChannelRef.bind('room.updated', (data: any) => {
+        domainChannelRef.bind('room.updated', (data: RoomUpdatedEvent) => {
+          if (targetRoomId && data.roomId !== targetRoomId) return
           handlersRef.current.onRoomUpdated?.({
             roomId: data.roomId,
             status: data.status,
             assignedToUserId: data.assignedToUserId ?? null,
           })
         })
+        domainChannelRef.bind('handoff.requested', (data: HandoffRequestedEvent) => {
+          if (targetRoomId && data.roomId !== targetRoomId) return
+          handlersRef.current.onHandoffRequested?.({
+            roomId: data.roomId,
+            status: data.status,
+          })
+        })
+      }
+
+      // Subscribe to room channel if a specific room is open
+      if (targetRoomId) {
+        const roomCh = CHANNEL.room(targetRoomId)
+        if (!subscribedChannels.current.has(roomCh)) {
+          const roomChannelRef = pusher.subscribe(roomCh)
+          subscribedChannels.current.add(roomCh)
+
+          roomChannelRef.bind('message.created', (data: MessageCreatedEvent) => {
+            handlersRef.current.onMessageCreated?.({
+              roomId: data.roomId,
+              messageId: data.messageId,
+            })
+          })
+          roomChannelRef.bind('room.updated', (data: RoomUpdatedEvent) => {
+            handlersRef.current.onRoomUpdated?.({
+              roomId: data.roomId,
+              status: data.status,
+              assignedToUserId: data.assignedToUserId ?? null,
+            })
+          })
+        }
       }
     },
     [],
@@ -120,12 +127,13 @@ export function useDashboardPusher(
     pusherRef.current = pusher
 
     return () => {
-      if (channelRef.current) {
-        try { pusher.unsubscribe(channelRef.current) } catch { /* ignore */ }
-      }
+      const channelsCopy = Array.from(subscribedChannels.current)
+      channelsCopy.forEach((channelName) => {
+        try { pusher.unsubscribe(channelName) } catch { /* ignore */ }
+      })
+      subscribedChannels.current.clear()
       pusher.disconnect()
       pusherRef.current = null
-      channelRef.current = null
     }
   }, [domainId, roomId, subscribe])
 }

@@ -7,7 +7,7 @@ vi.mock('@/lib/prisma', () => ({
     chatRoom: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     chatMessage: { create: vi.fn(), findMany: vi.fn() },
     flowStep: { findMany: vi.fn(), findFirst: vi.fn() },
-    customerResponses: { findUnique: vi.fn(), create: vi.fn() },
+    customerResponses: { findUnique: vi.fn(), create: vi.fn(), upsert: vi.fn() },
     customer: { update: vi.fn() },
     chatBot: { findUnique: vi.fn() },
     knowledgeItem: { findMany: vi.fn() },
@@ -50,7 +50,7 @@ function makeReq(kind: string, body: any) {
 }
 
 function setRoom(currentStepKey: string | null, consentAt = new Date(), status: string = 'BOT') {
-  vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', status: status as any, consentAt, currentStepKey } } as any)
+  vi.mocked(requireWidgetSession).mockResolvedValue({ room: { id: 'room-1', domainId: 'domain-1', customer: { id: 'cust-1' }, status: status as any, consentAt, currentStepKey } } as any)
 }
 
 function setSteps(steps = baseSteps) {
@@ -65,6 +65,7 @@ describe('questionnaire lifecycle', () => {
     ;(client.flowStep.findFirst as any).mockResolvedValue(null)
     ;(client.customerResponses.findUnique as any).mockResolvedValue(null)
     ;(client.customerResponses.create as any).mockResolvedValue({})
+    ;(client.customerResponses.upsert as any).mockResolvedValue({})
     ;(client.customer.update as any).mockResolvedValue({})
     ;(client.chatRoom.update as any).mockResolvedValue({})
     ;(client.chatMessage.create as any).mockResolvedValue({ id: 'msg-1' })
@@ -152,7 +153,8 @@ describe('questionnaire lifecycle', () => {
     const json = await res.json()
     expect(json.flowCompleted).toBe(false)
     expect(client.customerResponses.create).not.toHaveBeenCalled()
-    expect(client.chatRoom.update).toHaveBeenCalled()
+    expect(client.customerResponses.upsert).not.toHaveBeenCalled()
+    expect(client.chatRoom.update).not.toHaveBeenCalled()
   })
 
   it('discards AI answer when agent takes over between check and insert (race condition)', async () => {

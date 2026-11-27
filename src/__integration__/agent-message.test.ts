@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { client } from '@/lib/prisma'
-import { requireDomainAccess } from '@/lib/auth'
 
 const mockFindUnique = vi.fn()
+const mockFindFirst = vi.fn()
 const mockCreate = vi.fn()
 const mockUpdate = vi.fn()
 const mockUpdateMany = vi.fn()
@@ -10,8 +9,18 @@ const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
 
 vi.mock('@/lib/prisma', () => ({
   client: {
-    chatRoom: { findUnique: mockFindUnique, update: mockUpdate, updateMany: mockUpdateMany },
+    chatRoom: { findUnique: mockFindUnique, findFirst: mockFindFirst, update: mockUpdate, updateMany: mockUpdateMany },
     chatMessage: { create: mockCreate },
+    $transaction: vi.fn(async (cb: any) => {
+      const tx = {
+        chatRoom: {
+          findFirst: mockFindFirst,
+          update: mockUpdate,
+        },
+        chatMessage: { create: mockCreate },
+      }
+      return cb(tx)
+    }),
   },
 }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: mockRateLimit, getClientIp: () => '1.2.3.4' }))
@@ -51,6 +60,7 @@ describe('agent message', () => {
       status: 'LIVE',
       assignedToUserId: 'agent-1',
     })
+    mockFindFirst.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'LIVE', assignedToUserId: 'agent-1' })
     mockCreate.mockResolvedValue({ id: 'msg-1', message: 'Hello', senderType: 'AGENT', createdAt: new Date() })
     mockUpdate.mockResolvedValue({})
     mockUpdateMany.mockResolvedValue({ count: 1 })
@@ -62,7 +72,6 @@ describe('agent message', () => {
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.ok).toBe(true)
-    // senderType forced to AGENT regardless of client-supplied value
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ senderType: 'AGENT', senderUserId: 'agent-1', chatRoomId: 'room-1' }),
@@ -71,25 +80,24 @@ describe('agent message', () => {
   })
 
   it('rejects messaging a room not in this domain', async () => {
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'other-domain', status: 'LIVE', assignedToUserId: 'agent-1' })
+    mockFindFirst.mockResolvedValue(null)
     const { POST } = await import('@/app/api/agent/message/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1', content: 'Hello' }))
     expect(res.status).toBe(403)
   })
 
   it('rejects messaging a room not assigned to this agent', async () => {
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'LIVE', assignedToUserId: 'agent-2' })
-    mockUpdateMany.mockResolvedValue({ count: 0 })
+    mockFindFirst.mockResolvedValue(null)
     const { POST } = await import('@/app/api/agent/message/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1', content: 'Hello' }))
     expect(res.status).toBe(403)
   })
 
   it('rejects messaging a room not active', async () => {
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'CLOSED', assignedToUserId: 'agent-1' })
+    mockFindFirst.mockResolvedValue(null)
     const { POST } = await import('@/app/api/agent/message/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1', content: 'Hello' }))
-    expect(res.status).toBe(409)
+    expect(res.status).toBe(403)
   })
 
   it('rejects rate limited requests', async () => {

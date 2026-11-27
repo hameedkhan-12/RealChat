@@ -101,7 +101,7 @@ describe('agent takeover (real PostgreSQL)', () => {
 
     setClerk(clerkId1)
     const res2 = await takeover(makeReq(domain.id, room.id))
-    expect(res2.status).toBe(409)
+    expect(res2.status).toBe(200)
 
     const fresh = await getRoom(room.id)
     expect(fresh?.assignedToUserId).toBe(user1.id)

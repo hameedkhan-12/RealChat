@@ -14,9 +14,17 @@ export default async function ManagePage({
   const booking = await client.booking.findUnique({
     where: { id: bookingId },
     select: {
-      id: true, status: true, email: true, name: true, phone: true,
-      startsAt: true, endsAt: true, visitorTimezone: true,
-      cancelledAt: true, manageTokenHash: true, domain: { select: { name: true, timezone: true } },
+      id: true,
+      status: true,
+      email: true,
+      name: true,
+      phone: true,
+      startsAt: true,
+      endsAt: true,
+      visitorTimezone: true,
+      cancelledAt: true,
+      manageTokenHash: true,
+      domain: { select: { name: true, timezone: true } },
     },
   })
 
@@ -58,9 +66,24 @@ export default async function ManagePage({
         </p>
         {booking.cancelledAt && <p><strong>Cancelled at:</strong> {new Date(booking.cancelledAt).toLocaleString()}</p>}
         {canCancel ? (
-          <form action="/api/manage/cancel" method="POST" style={{ marginTop: '1.5rem' }}>
-            <input type="hidden" name="bookingId" value={booking.id} />
-            <input type="hidden" name="token" value={token} />
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault()
+              const res = await fetch('/api/manage/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bookingId: booking.id, token }),
+              })
+              if (res.ok) {
+                e.currentTarget.innerHTML =
+                  '<p style="color:#16a34a">Appointment cancelled.</p>'
+              } else {
+                e.currentTarget.innerHTML =
+                  '<p style="color:#dc2626">Failed to cancel appointment.</p>'
+              }
+            }}
+            style={{ marginTop: '1.5rem' }}
+          >
             <button type="submit" style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '0.5rem', cursor: 'pointer' }}>
               Cancel Appointment
             </button>
@@ -72,5 +95,5 @@ export default async function ManagePage({
         )}
       </body>
     </html>
-  )
-}
+    )
+  }

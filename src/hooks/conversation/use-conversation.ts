@@ -6,10 +6,10 @@ import {
   onGetDomainChatRooms,
   onOwnerSendMessage,
   onRealTimeChat,
-  onToggleRealtime,
   onViewUnReadMessages,
   onCloseConversation,
   onReturnToBot,
+  onTakeoverConversation,
 } from '@/actions/conversation'
 import { useChatContext } from '@/context/user-chat-context'
 import { getMonthName } from '@/lib/utils'
@@ -166,8 +166,13 @@ export const useChatWindow = () => {
     setLiveLoading(true)
     try {
       const targetStatus = liveMode ? 'BOT' : 'LIVE'
-      const result = await onToggleRealtime(chatRoom, targetStatus)
-      if (result?.ok) setLiveMode(targetStatus === 'LIVE')
+      if (targetStatus === 'BOT') {
+        const result = await onReturnToBot(chatRoom)
+        if (result?.ok) setLiveMode(false)
+      } else {
+        const result = await onTakeoverConversation(chatRoom)
+        if (result?.ok) setLiveMode(true)
+      }
     } finally {
       setLiveLoading(false)
     }

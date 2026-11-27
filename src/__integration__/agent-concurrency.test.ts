@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const mockUpdateMany = vi.fn()
+const mockFindFirst = vi.fn()
 const mockFindUnique = vi.fn()
 const mockRateLimit = vi.fn().mockResolvedValue({ success: true })
 
@@ -9,6 +10,7 @@ vi.mock('@/lib/prisma', () => ({
     chatRoom: {
       updateMany: mockUpdateMany,
       findUnique: mockFindUnique,
+      findFirst: mockFindFirst,
     },
   },
 }))
@@ -42,7 +44,7 @@ describe('two-agent concurrency', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockRateLimit.mockResolvedValue({ success: true })
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'WAITING_AGENT', assignedToUserId: null })
+    mockFindFirst.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'WAITING_AGENT', assignedToUserId: null })
   })
 
   it('only one agent can claim a room (atomic claim)', async () => {
@@ -57,7 +59,7 @@ describe('two-agent concurrency', () => {
     const res2 = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
     expect(res2.status).toBe(409)
     const json2 = await res2.json()
-    expect(json2.error).toBe('ROOM_NOT_CLAIMABLE')
+    expect(json2.error).toBe('TAKEOVER_CONFLICT')
   })
 
   it('atomic claim uses conditional update (WAITING_AGENT + unassigned)', async () => {
@@ -77,7 +79,7 @@ describe('two-agent concurrency', () => {
 
   it('rejects claiming a CLOSED room', async () => {
     mockUpdateMany.mockResolvedValue({ count: 0 })
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'CLOSED', assignedToUserId: null })
+    mockFindFirst.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'CLOSED', assignedToUserId: null })
     const { POST } = await import('@/app/api/agent/takeover/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
     expect(res.status).toBe(409)
@@ -85,7 +87,7 @@ describe('two-agent concurrency', () => {
 
   it('rejects claiming a BOT room (not WAITING_AGENT)', async () => {
     mockUpdateMany.mockResolvedValue({ count: 0 })
-    mockFindUnique.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', assignedToUserId: null })
+    mockFindFirst.mockResolvedValue({ id: 'room-1', domainId: 'domain-1', status: 'BOT', assignedToUserId: null })
     const { POST } = await import('@/app/api/agent/takeover/route')
     const res = await POST(makeReq({ domainId: 'domain-1', chatRoomId: 'room-1' }))
     expect(res.status).toBe(409)

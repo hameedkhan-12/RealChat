@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { client } from '@/lib/prisma'
 import { handle, HttpError } from '@/lib/http'
 import { rateLimit, getClientIp } from '@/lib/rate-limit'
-import { PublicKeySchema } from '@/lib/validation'
+import { PublicKeySchema, WidgetConfigSchema } from '@/lib/validation'
 
 export const GET = handle(async (req: Request) => {
   const rl = await rateLimit(`cfg:${getClientIp(req)}`, 120, 60)
@@ -17,34 +17,47 @@ export const GET = handle(async (req: Request) => {
   if (!d) throw new HttpError(404, 'UNKNOWN_KEY')
   const b = d.chatBot
 
-  const flow = await client.flowStep.findMany({
+  const flowSteps = await client.flowStep.findMany({
     where: { domainId: d.id, isActive: true },
     orderBy: { position: 'asc' },
-    select: { key: true, type: true, prompt: true, options: true, required: true },
+    select: { key: true, prompt: true, type: true, options: true, required: true },
   })
 
-  return NextResponse.json(
-    {
-      ok: true,
-      bot: {
-        name: b?.botName ?? d.name,
-        welcomeMessage: b?.welcomeMessage ?? null,
-        primaryColor: b?.primaryColor ?? null,
-        position: b?.position ?? 'BOTTOM_RIGHT',
-        consentText: b?.consentText ?? null,
-        privacyPolicyUrl: b?.privacyPolicyUrl ?? null,
-        handoffEnabled: b?.handoffEnabled ?? true,
-      },
-      locale: d.defaultLocale,
-      turnstileSiteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? undefined,
-      flow: flow.map((s) => ({
-        key: s.key,
-        type: s.type,
-        prompt: s.prompt,
-        options: Array.isArray(s.options) ? (s.options as { label: string; value: string }[]).map((o) => o.value) : null,
-        required: s.required,
-      })),
+  const steps = flowSteps.map((s) => ({
+    key: s.key,
+    question: s.prompt,
+    type: s.type,
+    required: s.required,
+    options: Array.isArray(s.options)
+      ? (s.options as { label: string; value: string }[]).map((o) => o.value)
+      : null,
+  }))
+
+  const config = WidgetConfigSchema.parse({
+    ok: true,
+    domain: {
+      publicKey: key,
+      name: d.name,
+      timezone: d.timezone,
+      defaultLocale: d.defaultLocale,
     },
-    { headers: { 'Cache-Control': 'public, max-age=30' } }
-  )
+    brand: {
+      name: b?.botName ?? d.name,
+      logoUrl: b?.avatarUrl ?? null,
+      primaryColor: b?.primaryColor ?? null,
+      welcomeMessage: b?.welcomeMessage ?? null,
+    },
+    features: {
+      questionnaire: true,
+      handoff: b?.handoffEnabled ?? true,
+      booking: b?.bookingEnabled ?? true,
+    },
+    turnstile: {
+      enabled: Boolean(process.env.TURNSTILE_SECRET_KEY && process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY),
+      siteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null,
+    },
+    flow: { version: 1, steps },
+  })
+
+  return NextResponse.json(config, { headers: { 'Cache-Control': 'public, max-age=30' } })
 })

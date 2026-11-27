@@ -31,14 +31,14 @@ describe('advanceFlow', () => {
 
   it('returns first step when no current step', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue(baseSteps as any)
-    const result = await advanceFlow('d1', null)
+    const result = await advanceFlow(client,'d1', null)
     expect(result.kind).toBe('step')
     expect((result.step as any).key).toBe('step1')
   })
 
   it('advances to next step on valid answer', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue(baseSteps as any)
-    const result = await advanceFlow('d1', 'step1', 'buy')
+    const result = await advanceFlow(client,'d1', 'step1', 'buy')
     expect(result.kind).toBe('step')
     expect((result.step as any).key).toBe('step2')
   })
@@ -46,40 +46,40 @@ describe('advanceFlow', () => {
   it('branches via nextStepKey', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue(baseSteps as any)
     // 'rent' has no nextStepKey, so goes to step2 too (next in order)
-    const result = await advanceFlow('d1', 'step1', 'rent')
+    const result = await advanceFlow(client,'d1', 'step1', 'rent')
     expect(result.kind).toBe('step')
     expect((result.step as any).key).toBe('step2')
   })
 
   it('completes when no more steps', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue(baseSteps as any)
-    const result = await advanceFlow('d1', 'step3', 'test@test.com')
+    const result = await advanceFlow(client,'d1', 'step3', 'test@test.com')
     expect(result.kind).toBe('complete')
   })
 
   it('repeats current step on invalid choice', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue(baseSteps as any)
-    const result = await advanceFlow('d1', 'step1', 'maybe')
+    const result = await advanceFlow(client,'d1', 'step1', 'maybe')
     expect(result.kind).toBe('step')
     expect((result.step as any).key).toBe('step1')
   })
 
   it('validates email format', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue(baseSteps as any)
-    const result = await advanceFlow('d1', 'step3', 'not-an-email')
+    const result = await advanceFlow(client,'d1', 'step3', 'not-an-email')
     expect(result.kind).toBe('step')
     expect((result.step as any).key).toBe('step3')
   })
 
   it('accepts valid email', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue(baseSteps as any)
-    const result = await advanceFlow('d1', 'step3', 'test@example.com')
+    const result = await advanceFlow(client,'d1', 'step3', 'test@example.com')
     expect(result.kind).toBe('complete')
   })
 
   it('returns complete when no steps exist', async () => {
     vi.mocked(client.flowStep.findMany).mockResolvedValue([])
-    const result = await advanceFlow('d1', null)
+    const result = await advanceFlow(client,'d1', null)
     expect(result.kind).toBe('complete')
   })
 })

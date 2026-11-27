@@ -12,6 +12,7 @@ export type ChatBotMessageProps = {
 }
 
 export type ChatMessageType = {
+  id?: string
   role: 'assistant' | 'user'
   content: string
   link?: string
@@ -29,6 +30,9 @@ export type ChatMessageType = {
     timezone?: string
     actions?: { type: string; label: string }[]
   }
+  createdAt?: string
+  seen?: boolean
+  senderUserId?: string | null
 }
 
 export const ConversationSearchSchema = z.object({

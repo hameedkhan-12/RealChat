@@ -18,8 +18,11 @@ export type RetrievalInput = {
   question: string
 }
 
-/** Maximum number of knowledge items to retrieve per query. */
-const MAX_RETRIEVED = 5
+/** Maximum number of knowledge items to retrieve per query.
+ *  We fetch ALL active items for the domain then rank by relevance,
+  * so older relevant items are not excluded by an arbitrary cap.
+ */
+const MAX_RETRIEVED = 200
 
 /** Maximum total characters of knowledge context to pass to the model. */
 const MAX_CONTEXT_CHARS = 4000
@@ -59,6 +62,7 @@ export function rankKnowledgeByRelevance(
       score: scoreItem(qWords, item),
     }))
     .filter((x) => x.score >= MIN_RELEVANCE_SCORE)
+    // Relevance first; recency (updatedAt) only as tie-breaker
     .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
     .map((x) => ({ ...x.item, score: x.score }))
 }
@@ -67,6 +71,9 @@ export function rankKnowledgeByRelevance(
  * Retrieve active knowledge items for a domain, ranked by relevance to the question.
  * All queries are scoped to the tenant's domainId to prevent cross-tenant data leakage.
  * Only active (isActive=true) items are returned.
+ *
+ * Retrieves ALL active items (bounded by MAX_RETRIEVED) then ranks by relevance,
+ * so older relevant items are not excluded by an arbitrary "newest 5" cap.
  */
 export async function retrieveKnowledge(input: RetrievalInput): Promise<RetrievalResult> {
   const items = await client.knowledgeItem.findMany({
@@ -74,13 +81,15 @@ export async function retrieveKnowledge(input: RetrievalInput): Promise<Retrieva
       domainId: input.domainId,
       isActive: true,
     },
-    select: { id: true, title: true, content: true },
+    select: { id: true, title: true, content: true, updatedAt: true },
     take: MAX_RETRIEVED,
     orderBy: { updatedAt: 'desc' },
   })
 
   const ranked = rankKnowledgeByRelevance(input.question, items)
 
+  // sufficientContext is true only when we have at least one relevant candidate.
+  // If no items match the question, we abstain instead of calling the LLM.
   const sufficientContext = ranked.length > 0
 
   return {

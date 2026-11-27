@@ -1,221 +1,28 @@
 'use server'
 
 import { client } from '@/lib/prisma'
-import { requireDomainAccess, requireResourceAccess } from '@/lib/auth'
+import { requireDomainAccess, requireResourceAccess, requireUser } from '@/lib/auth'
 import { action } from '@/lib/action'
 import { logger } from '@/lib/logger'
-import { getPusherServer, roomChannel } from '@/lib/pusher-server'
+import { HttpError } from '@/lib/errors'
+import {
+  requestHandoff,
+  takeOverConversation,
+  returnConversationToBot,
+  closeConversation,
+  assertCanAgentReply,
+  createAgentMessage,
+  RoomNotFoundError,
+  TakeoverConflictError,
+  NotConversationOwnerError,
+  RoomClosedError,
+} from '@/server/conversation-ownership'
 
 export type ActionResult<T = unknown> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number }
 
 export type ChatRoomStatus = 'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'
-
-export const onToggleRealtime = async (id: string, state: ChatRoomStatus): Promise<ActionResult> => {
-  const access = await requireResourceAccess('chatRoom', id)
-  const domainId = access.domainId
-  try {
-    const data: Record<string, any> = { status: state, lastActivityAt: new Date() }
-    if (state === 'BOT') {
-      data.assignedToUserId = null
-    }
-
-    // Atomic update: only change if room is not already CLOSED
-    const updated = await client.chatRoom.updateMany({
-      where: {
-        id,
-        domainId,
-        status: { not: 'CLOSED' },
-      },
-      data,
-    })
-
-    if (updated.count === 0) {
-      // Room not found, wrong domain, or already CLOSED
-      const existing = await client.chatRoom.findUnique({ where: { id } })
-      if (!existing || existing.domainId !== domainId) {
-        return { ok: false, error: 'FORBIDDEN', status: 403 }
-      }
-      // Already in target state - idempotent
-      return {
-        ok: true,
-        data: {
-          status: 200,
-          message: `Room already ${state}`,
-          chatRoom: { ...existing, live: existing.status === 'LIVE' },
-        },
-      }
-    }
-
-    const chatRoom = await client.chatRoom.findUnique({
-      where: { id },
-      select: { id: true, status: true, assignedToUserId: true },
-    })
-    if (!chatRoom) {
-      return { ok: false, error: 'FORBIDDEN', status: 403 }
-    }
-    // Publish realtime event
-    const pusher = getPusherServer()
-    if (pusher) {
-      try {
-        await pusher.trigger(roomChannel(id), 'room.updated', {
-          roomId: id,
-          status: chatRoom.status,
-          assignedToUserId: chatRoom.assignedToUserId,
-        })
-      } catch {
-        // non-fatal
-      }
-    }
-    return {
-      ok: true,
-      data: {
-        status: 200,
-        message: `Room set to ${state}`,
-        chatRoom: { ...chatRoom, live: chatRoom.status === 'LIVE' },
-      },
-    }
-  } catch (error) {
-    logger.error('onToggleRealtime failed', { error: String(error), chatRoomId: id })
-    return { ok: false, error: 'Failed to update room status', status: 500 }
-  }
-}
-
-export const onCloseConversation = async (id: string): Promise<ActionResult> => {
-  const access = await requireResourceAccess('chatRoom', id)
-  const domainId = access.domainId
-  try {
-    const updated = await client.chatRoom.updateMany({
-      where: {
-        id,
-        domainId,
-        status: { not: 'CLOSED' },
-      },
-      data: {
-        status: 'CLOSED',
-        lastActivityAt: new Date(),
-        assignedToUserId: null,
-      },
-    })
-
-    if (updated.count === 0) {
-      const existing = await client.chatRoom.findUnique({ where: { id } })
-      if (!existing || existing.domainId !== domainId) {
-        return { ok: false, error: 'FORBIDDEN', status: 403 }
-      }
-      // Already closed - idempotent
-      return {
-        ok: true,
-        data: {
-          status: 200,
-          message: 'Room already closed',
-          chatRoom: { ...existing, status: 'CLOSED' },
-        },
-      }
-    }
-
-    const room = await client.chatRoom.findUnique({
-      where: { id },
-      select: { id: true, status: true },
-    })
-    const pusher = getPusherServer()
-    if (pusher) {
-      try {
-        await pusher.trigger(roomChannel(id), 'room.updated', {
-          roomId: id,
-          status: 'CLOSED',
-          assignedToUserId: null,
-        })
-      } catch {
-        // non-fatal
-      }
-    }
-    return {
-      ok: true,
-      data: {
-        status: 200,
-        message: 'Conversation closed',
-        chatRoom: room,
-      },
-    }
-  } catch (error) {
-    logger.error('onCloseConversation failed', { error: String(error), chatRoomId: id })
-    return { ok: false, error: 'Failed to close conversation', status: 500 }
-  }
-}
-
-export const onReturnToBot = async (id: string): Promise<ActionResult> => {
-  const access = await requireResourceAccess('chatRoom', id)
-  const domainId = access.domainId
-  try {
-    const updated = await client.chatRoom.updateMany({
-      where: {
-        id,
-        domainId,
-        status: { not: 'CLOSED' },
-      },
-      data: {
-        status: 'BOT',
-        lastActivityAt: new Date(),
-        assignedToUserId: null,
-      },
-    })
-
-    if (updated.count === 0) {
-      const existing = await client.chatRoom.findUnique({ where: { id } })
-      if (!existing || existing.domainId !== domainId) {
-        return { ok: false, error: 'FORBIDDEN', status: 403 }
-      }
-      return {
-        ok: true,
-        data: {
-          status: 200,
-          message: 'Room already BOT',
-          chatRoom: { ...existing, status: 'BOT' },
-        },
-      }
-    }
-
-    const room = await client.chatRoom.findUnique({
-      where: { id },
-      select: { id: true, status: true },
-    })
-    const pusher = getPusherServer()
-    if (pusher) {
-      try {
-        await pusher.trigger(roomChannel(id), 'room.updated', {
-          roomId: id,
-          status: 'BOT',
-          assignedToUserId: null,
-        })
-      } catch {
-        // non-fatal
-      }
-    }
-    return {
-      ok: true,
-      data: {
-        status: 200,
-        message: 'Returned to bot',
-        chatRoom: room,
-      },
-    }
-  } catch (error) {
-    logger.error('onReturnToBot failed', { error: String(error), chatRoomId: id })
-    return { ok: false, error: 'Failed to return to bot', status: 500 }
-  }
-}
-
-export const onGetConversationMode = async (id: string) => {
-  await requireResourceAccess('chatRoom', id)
-  try {
-    const chatRoom = await client.chatRoom.findUnique({ where: { id }, select: { status: true } })
-    return chatRoom ? { live: chatRoom.status === 'LIVE', status: chatRoom.status } : null
-  } catch (error) {
-    logger.error('onGetConversationMode failed', { error: String(error), chatRoomId: id })
-  }
-}
 
 export type ChatRoomItem = {
   id: string
@@ -233,6 +40,101 @@ export type ChatRoomItem = {
   }
   assignedToUserId: string | null
   latestMessage: string | null
+}
+
+export const onRequestHandoff = async (roomId: string): Promise<ActionResult> => {
+  const access = await requireResourceAccess('chatRoom', roomId)
+  try {
+    const result = await requestHandoff(roomId, access.domainId)
+    return { ok: true, data: result }
+  } catch (e) {
+    if (e instanceof RoomNotFoundError) return { ok: false, error: e.code, status: 404 }
+    if (e instanceof HttpError) return { ok: false, error: e.code, status: e.status }
+    logger.error('onRequestHandoff failed', { error: String(e), roomId })
+    return { ok: false, error: 'Failed to request handoff', status: 500 }
+  }
+}
+
+export const onTakeoverConversation = async (roomId: string): Promise<ActionResult> => {
+  const { user } = await requireUser()
+  const access = await requireResourceAccess('chatRoom', roomId)
+  try {
+    const result = await takeOverConversation(roomId, access.domainId, user.id)
+    return { ok: true, data: result }
+  } catch (e) {
+    if (e instanceof RoomNotFoundError) return { ok: false, error: e.code, status: 404 }
+    if (e instanceof RoomClosedError) return { ok: false, error: e.code, status: 409 }
+    if (e instanceof TakeoverConflictError) return { ok: false, error: e.code, status: 409 }
+    if (e instanceof HttpError) return { ok: false, error: e.code, status: e.status }
+    logger.error('onTakeoverConversation failed', { error: String(e), roomId })
+    return { ok: false, error: 'Failed to take over conversation', status: 500 }
+  }
+}
+
+export const onCloseConversation = async (id: string): Promise<ActionResult> => {
+  const { user } = await requireUser()
+  const access = await requireResourceAccess('chatRoom', id)
+  try {
+    const result = await closeConversation(id, access.domainId, user.id)
+    return { ok: true, data: result }
+  } catch (e) {
+    if (e instanceof RoomClosedError) return { ok: true, data: { status: 'CLOSED' } }
+    if (e instanceof RoomNotFoundError) return { ok: false, error: e.code, status: 404 }
+    if (e instanceof HttpError) return { ok: false, error: e.code, status: e.status }
+    logger.error('onCloseConversation failed', { error: String(e), chatRoomId: id })
+    return { ok: false, error: 'Failed to close conversation', status: 500 }
+  }
+}
+
+export const onReturnToBot = async (id: string): Promise<ActionResult> => {
+  const { user } = await requireUser()
+  const access = await requireResourceAccess('chatRoom', id)
+  try {
+    const result = await returnConversationToBot(id, access.domainId, user.id)
+    return { ok: true, data: result }
+  } catch (e) {
+    if (e instanceof RoomClosedError) return { ok: false, error: e.code, status: 409 }
+    if (e instanceof RoomNotFoundError) return { ok: false, error: e.code, status: 404 }
+    if (e instanceof HttpError) return { ok: false, error: e.code, status: e.status }
+    logger.error('onReturnToBot failed', { error: String(e), chatRoomId: id })
+    return { ok: false, error: 'Failed to return to bot', status: 500 }
+  }
+}
+
+export const onGetConversationMode = async (id: string) => {
+  await requireResourceAccess('chatRoom', id)
+  try {
+    const chatRoom = await client.chatRoom.findUnique({ where: { id }, select: { status: true } })
+    return chatRoom ? { live: chatRoom.status === 'LIVE', status: chatRoom.status } : null
+  } catch (error) {
+    logger.error('onGetConversationMode failed', { error: String(error), chatRoomId: id })
+  }
+}
+
+export const onOwnerSendMessage = async (
+  domainId: string,
+  chatroom: string,
+  message: string
+): Promise<ActionResult> => {
+  const { user } = await requireDomainAccess(domainId, 'AGENT')
+  try {
+    // Atomic: ownership check + message insert in one transaction
+    const created = await client.$transaction(async (tx) => {
+      await assertCanAgentReply(chatroom, domainId, user.id)
+      return createAgentMessage(tx, chatroom, user.id, message)
+    })
+    return {
+      ok: true,
+      data: {
+        message: [{ ...created, role: 'assistant' }],
+      },
+    }
+  } catch (e) {
+    if (e instanceof NotConversationOwnerError) return { ok: false, error: e.code, status: 403 }
+    if (e instanceof HttpError) return { ok: false, error: e.code, status: e.status }
+    logger.error('onOwnerSendMessage failed', { error: String(e), chatRoomId: chatroom })
+    return { ok: false, error: 'Failed to send message', status: 500 }
+  }
 }
 
 export const onGetDomainChatRooms = async (
@@ -257,11 +159,13 @@ export const onGetDomainChatRooms = async (
     }
   }
 
-  // Cursor-based pagination: (lastActivityAt, id)
+  // Cursor-based pagination: (lastActivityAt DESC, id ASC) lexicographic predicate
   if (cursor) {
     const [lastActivityAt, id] = cursor.split('|')
-    where.lastActivityAt = { lte: new Date(lastActivityAt) }
-    where.id = { gt: id }
+    where.OR = [
+      { lastActivityAt: { lt: new Date(lastActivityAt) } },
+      { lastActivityAt: new Date(lastActivityAt), id: { gt: id } },
+    ]
   }
 
   try {
@@ -303,7 +207,7 @@ export const onGetDomainChatRooms = async (
     return {
       ok: true,
       data: {
-        items: rooms.map((r) => ({
+        items: items.map((r) => ({
           id: r.id,
           status: r.status,
           createdAt: r.createdAt,
@@ -324,22 +228,49 @@ export const onGetDomainChatRooms = async (
   }
 }
 
-export const onGetChatMessages = async (id: string): Promise<ActionResult> => {
+export const onGetChatMessages = async (
+  id: string,
+  cursor?: string,
+  limit = 50
+): Promise<ActionResult> => {
   await requireResourceAccess('chatRoom', id)
+
+  const parsedLimit = Math.min(Math.max(limit, 1), 100)
+
+  const where: any = { chatRoomId: id }
+
+  // Cursor-based pagination: (createdAt ASC, id ASC) lexicographic predicate
+  if (cursor) {
+    const [createdAt, msgId] = cursor.split('|')
+    where.OR = [
+      { createdAt: { gt: new Date(createdAt) } },
+      { createdAt: new Date(createdAt), id: { gt: msgId } },
+    ]
+  }
+
   try {
     const room = await client.chatRoom.findUnique({
       where: { id },
       select: {
         id: true,
         status: true,
+        customer: { select: { email: true, name: true, phone: true } },
         messages: {
           select: { id: true, senderType: true, message: true, createdAt: true, seen: true },
-          orderBy: { createdAt: 'asc' },
+          where,
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          take: parsedLimit + 1,
         },
-        customer: { select: { email: true, name: true, phone: true } },
       },
     })
     if (!room) return { ok: true, data: undefined }
+
+    const hasMore = room.messages.length > parsedLimit
+    const items = hasMore ? room.messages.slice(0, parsedLimit) : room.messages
+    const nextCursor = hasMore
+      ? `${items[parsedLimit - 1].createdAt.toISOString()}|${items[parsedLimit - 1].id}`
+      : null
+
     return {
       ok: true,
       data: [
@@ -347,10 +278,11 @@ export const onGetChatMessages = async (id: string): Promise<ActionResult> => {
           id: room.id,
           status: room.status,
           customer: room.customer,
-          message: room.messages.map((m) => ({
+          message: items.map((m) => ({
             ...m,
             role: m.senderType === 'VISITOR' ? 'user' : 'assistant',
           })),
+          nextCursor,
         },
       ],
     }
@@ -379,77 +311,6 @@ export const onRealTimeChat = async (
   void chatRoom; void message; void id; void role
 }
 
-export const onOwnerSendMessage = async (
-  domainId: string,
-  chatroom: string,
-  message: string
-): Promise<ActionResult> => {
-  const { user } = await requireDomainAccess(domainId, 'AGENT')
-  try {
-    // Verify the room belongs to this domain and is LIVE
-    const room = await client.chatRoom.findUnique({
-      where: { id: chatroom },
-      select: { id: true, domainId: true, status: true, assignedToUserId: true },
-    })
-    if (!room || room.domainId !== domainId) {
-      return { ok: false, error: 'FORBIDDEN', status: 403 }
-    }
-    // Only allow messaging in LIVE conversations
-    if (room.status !== 'LIVE') {
-      return { ok: false, error: 'ROOM_NOT_ACTIVE', status: 409 }
-    }
-    // Only the assigned agent can send messages - atomic update
-    const updated = await client.chatRoom.updateMany({
-      where: {
-        id: chatroom,
-        domainId,
-        status: 'LIVE',
-        assignedToUserId: user.id,
-      },
-      data: {
-        lastActivityAt: new Date(),
-      },
-    })
-
-    if (updated.count === 0) {
-      return { ok: false, error: 'FORBIDDEN', status: 403 }
-    }
-
-    // Sender type is ALWAYS AGENT - never trust client-supplied role
-    const created = await client.chatMessage.create({
-      data: {
-        chatRoomId: chatroom,
-        message,
-        senderType: 'AGENT',
-        senderUserId: user.id,
-      },
-      select: { id: true, message: true, senderType: true, createdAt: true },
-    })
-
-    // Publish realtime event
-    const pusher = getPusherServer()
-    if (pusher) {
-      try {
-        await pusher.trigger(roomChannel(chatroom), 'message.created', {
-          roomId: chatroom,
-          messageId: created.id,
-        })
-      } catch {
-        // non-fatal
-      }
-    }
-    return {
-      ok: true,
-      data: {
-        message: [{ ...created, role: 'assistant' }],
-      },
-    }
-  } catch (error) {
-    logger.error('onOwnerSendMessage failed', { error: String(error), chatRoomId: chatroom })
-    return { ok: false, error: 'Failed to send message', status: 500 }
-  }
-}
-
 export const onGetCustomerAnswers = async (customerId: string): Promise<ActionResult> => {
   return action(async () => {
     const access = await requireResourceAccess('customer', customerId, 'AGENT')
@@ -461,7 +322,7 @@ export const onGetCustomerAnswers = async (customerId: string): Promise<ActionRe
         phone: true,
         consentAt: true,
         questions: { select: { id: true, question: true, answered: true, stepKey: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
-        chatRooms: { select: { id: true, status: true, createdAt: true } },
+        chatRooms: { select: { id: true, status: true, createdAt: true, flowCompletedAt: true } },
       },
     })
     if (!customer) return { ok: false, error: 'FORBIDDEN', status: 403 }

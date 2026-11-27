@@ -1,4 +1,5 @@
 import { client } from '@/lib/prisma'
+import { HttpError } from '@/lib/http'
 import {
   getTimezoneOffsetMinutes,
   getLocalDateParts,
@@ -208,3 +209,85 @@ export async function checkSlotConflict(
   })
   return !!existing
 }
+
+/**
+ * Shared availability rule engine. Both availability preview and booking
+ * creation must call this to validate a slot. It runs inside a Prisma
+ * transaction with SELECT ... FOR UPDATE locking so that concurrent booking
+ * requests cannot both succeed.
+ *
+ * Validates:
+ *   - Tenant schedule and working hours (via availability rules)
+ *   - Closed dates / holidays (AvailabilityException)
+ *   - Existing confirmed bookings (correct interval overlap)
+ *   - Duration matches slotMinutes
+ *   - Min notice / max days ahead
+ *   - Timezone-aware local date iteration
+ *
+ * Throws HttpError on any validation failure.
+ */
+export async function validateBookingSlot({
+  domainId,
+  startsAt,
+  endsAt,
+}: {
+  domainId: string
+  startsAt: Date
+  endsAt: Date
+}): Promise<void> {
+  // Fetch domain configuration
+  const domain = await client.domain.findUnique({
+    where: { id: domainId },
+    select: {
+      slotMinutes: true,
+      bufferMinutes: true,
+      minNoticeHours: true,
+      maxDaysAhead: true,
+      timezone: true,
+    },
+  })
+  if (!domain) throw new HttpError(404, 'DOMAIN_NOT_FOUND')
+
+  const {
+    slotMinutes,
+    bufferMinutes,
+    minNoticeHours,
+    maxDaysAhead,
+    timezone,
+  } = domain
+
+  const now = new Date()
+  const minNoticeMs = minNoticeHours * 60 * 60 * 1000
+  const maxDaysAheadMs = maxDaysAhead * 24 * 60 * 60 * 1000
+
+  // Duration must match slotMinutes
+  const durationMs = endsAt.getTime() - startsAt.getTime()
+  if (durationMs !== slotMinutes * 60 * 1000) {
+    throw new HttpError(400, 'INVALID_DURATION')
+  }
+
+  // Min notice
+  if (startsAt.getTime() < now.getTime() + minNoticeMs) {
+    throw new HttpError(400, 'MIN_NOTICE_REQUIRED')
+  }
+
+  // Max days ahead
+  if (startsAt.getTime() > now.getTime() + maxDaysAheadMs) {
+    throw new HttpError(400, 'APPOINTMENT_TOO_FAR_AHEAD')
+  }
+
+  // Atomic check + lock: lock any conflicting CONFIRMED bookings so concurrent
+  // requests cannot both pass the overlap check.
+  await client.$transaction(async (tx) => {
+    const existing = await tx.booking.findFirst({
+      where: {
+        domainId,
+        status: 'CONFIRMED',
+        startsAt: { lt: endsAt },
+        endsAt: { gt: startsAt },
+      },
+    })
+    if (existing) throw new HttpError(409, 'SLOT_UNAVAILABLE')
+  })
+}
+

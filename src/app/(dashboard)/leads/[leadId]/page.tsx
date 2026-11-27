@@ -38,7 +38,9 @@ export default async function LeadDetailPage({
   }
 
   const questions = answersData.questions ?? []
-  const flowCompletedAt = answersData.consentAt ? new Date() : null
+  const flowCompletedAt =
+    answersData.chatRooms?.find((r: any) => r.flowCompletedAt)?.flowCompletedAt ??
+    null
 
   return (
     <div className="w-full h-full flex flex-col">
