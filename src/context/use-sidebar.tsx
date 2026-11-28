@@ -65,7 +65,14 @@ const onGetCurrentMode = async () => {
     }
   }, [chatRoom])
 
-  const page = pathname.split('/').pop()
+  const page = (() => {
+    const raw = pathname.split('/').pop() ?? ''
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return raw
+    }
+  })()
   const { signOut } = useClerk()
 
   const onSignOut = () => signOut(() => router.push('/'))

@@ -127,7 +127,14 @@ export const onGetCurrentDomainInfo = async (domain: string) => {
   try {
     const dbUser = await client.user.findUnique({ where: { clerkId: user.id }, select: { id: true } })
     if (!dbUser) return
-    const slug = domain
+    // Route params can arrive still URL-encoded (e.g. "Lakeview%20Realty"),
+    // so normalise before matching against the stored domain name.
+    let slug = domain
+    try {
+      slug = decodeURIComponent(domain)
+    } catch {
+      // malformed escape sequence — keep the raw value
+    }
     const domainRecord = await client.domain.findFirst({
       where: {
         OR: [{ name: slug }, { name: { startsWith: `${slug}.` } }],
