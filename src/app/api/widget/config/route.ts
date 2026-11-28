@@ -2,7 +2,22 @@ import { NextResponse } from 'next/server'
 import { client } from '@/lib/prisma'
 import { handle, HttpError } from '@/lib/http'
 import { rateLimit, getClientIp } from '@/lib/rate-limit'
-import { PublicKeySchema, WidgetConfigSchema } from '@/lib/validation'
+import { IanaTimezoneSchema, LocaleSchema, PublicKeySchema, WidgetConfigSchema } from '@/lib/validation'
+
+/** Flow options are stored as `{ label, value }` objects, but older rows may be plain strings. */
+function optionValues(options: unknown): string[] {
+  if (!Array.isArray(options)) return []
+  const values: string[] = []
+  for (const option of options) {
+    if (typeof option === 'string') {
+      values.push(option)
+    } else if (option && typeof option === 'object' && 'value' in option) {
+      const value = (option as { value?: unknown }).value
+      if (typeof value === 'string') values.push(value)
+    }
+  }
+  return values
+}
 
 export const GET = handle(async (req: Request) => {
   const rl = await rateLimit(`cfg:${getClientIp(req)}`, 120, 60)
@@ -28,24 +43,40 @@ export const GET = handle(async (req: Request) => {
     question: s.prompt,
     type: s.type,
     required: s.required,
-    options: Array.isArray(s.options)
-      ? (s.options as { label: string; value: string }[]).map((o) => o.value)
-      : null,
+    options: optionValues(s.options),
   }))
+
+  // Normalise tenant-controlled values so the shared client schema can never
+  // fail on a legacy row. Never expose internal identifiers or secrets here.
+  const defaultLocale = LocaleSchema.safeParse(d.defaultLocale).success
+    ? (d.defaultLocale as 'en' | 'ar')
+    : 'en'
+  const timezone = IanaTimezoneSchema.safeParse(d.timezone).success ? d.timezone : 'UTC'
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || null
+  const turnstileSecret = process.env.TURNSTILE_SECRET_KEY || undefined
+  const turnstileEnabled = Boolean(turnstileSecret && siteKey)
 
   const config = WidgetConfigSchema.parse({
     ok: true,
     domain: {
       publicKey: key,
       name: d.name,
-      timezone: d.timezone,
-      defaultLocale: d.defaultLocale,
+      timezone,
+      defaultLocale,
     },
     brand: {
-      name: b?.botName ?? d.name,
+      name: b?.botName?.trim() || d.name,
       logoUrl: b?.avatarUrl ?? null,
       primaryColor: b?.primaryColor ?? null,
+      textColor: b?.textColor ?? null,
+      avatarUrl: b?.avatarUrl ?? null,
+      position: b?.position ?? 'BOTTOM_RIGHT',
       welcomeMessage: b?.welcomeMessage ?? null,
+      consentText: b?.consentText ?? null,
+      privacyPolicyUrl: b?.privacyPolicyUrl ?? null,
+      offlineMessage: b?.offlineMessage ?? null,
+      showPoweredBy: b?.showPoweredBy ?? true,
+      launcherLabel: b?.launcherLabel ?? null,
     },
     features: {
       questionnaire: true,
@@ -53,8 +84,8 @@ export const GET = handle(async (req: Request) => {
       booking: b?.bookingEnabled ?? true,
     },
     turnstile: {
-      enabled: Boolean(process.env.TURNSTILE_SECRET_KEY && process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY),
-      siteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null,
+      enabled: turnstileEnabled,
+      siteKey,
     },
     flow: { version: 1, steps },
   })

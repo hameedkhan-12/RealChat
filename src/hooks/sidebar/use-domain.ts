@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { UploadClient } from '@uploadcare/upload-client'
 import { usePathname, useRouter } from 'next/navigation'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { FieldValues, useForm } from 'react-hook-form'
 
 const upload = new UploadClient({
@@ -30,12 +30,8 @@ export const useDomain = () => {
   const pathname = usePathname()
   const { toast } = useToast()
   const [loading, setLoading] = useState<boolean>(false)
-  const [isDomain, setIsDomain] = useState<string | undefined>(undefined)
   const router = useRouter()
-
-  useEffect(() => {
-    setIsDomain(pathname.split('/').pop())
-  }, [pathname])
+  const isDomain = pathname.split('/').pop()
 
   const onAddDomain = handleSubmit(async (values: FieldValues) => {
     setLoading(true)

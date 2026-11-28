@@ -14,17 +14,23 @@ export function LeadsClient({
   initialLeads,
 }: LeadsClientProps) {
   const [leads, setLeads] = useState<any[]>(initialLeads)
-  const [loading, setLoading] = useState(false)
+  const [loadedDomainId, setLoadedDomainId] = useState(domainId)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const loading = loadedDomainId !== domainId
 
   useEffect(() => {
     if (!domainId) return
-    setLoading(true)
+    let cancelled = false
     onGetLeads(domainId)
       .then((res) => {
-        if (res?.ok) setLeads((res.data as any).leads || [])
+        if (!cancelled && res?.ok) setLeads((res.data as any).leads || [])
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!cancelled) setLoadedDomainId(domainId)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [domainId])
 
   const onDelete = async (id: string) => {

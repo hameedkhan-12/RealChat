@@ -1,14 +1,23 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatMessageType } from '@/schemas/conversation.schema'
 import { WidgetConfigSchema } from '@/lib/validation'
 import type { WidgetConfigResponse } from '@/lib/validation'
 import Pusher from 'pusher-js'
 import { CHANNEL, type MessageCreatedEvent } from '@/lib/conversation-events'
+import { widgetStorageKey } from '@/lib/widget-storage'
 
 type Brand = WidgetConfigResponse['brand']
 type WidgetConfig = WidgetConfigResponse
+type ChatStatus = 'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'
+
+type UseChatBotOptions = {
+  publicKey?: string
+  pageUrl?: string
+  utm?: Record<string, string>
+  locale?: 'en' | 'ar'
+}
 
 type UseChatBotReturn = {
   botOpened: boolean
@@ -27,156 +36,264 @@ type UseChatBotReturn = {
   sessionToken: string | undefined
   chatRoomId: string | undefined
   consentGiven: boolean
+  consentPending: boolean
   setConsentGiven: (v: boolean) => void
   requestHandoff: () => void
-  status: 'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'
+  status: ChatStatus
   acceptConsent: () => Promise<void>
   sendMessage: (text: string, answer?: string | null) => Promise<void>
   sendQuestion: (content: string) => Promise<void>
   errors: any
   getValues: any
   turnstileSiteKey?: string | null
+  turnstileResetSignal: number
+  onTurnstileToken: (token: string) => void
+  onTurnstileExpired: () => void
+  onTurnstileError: () => void
+  retrySession: () => void
   flow: any[]
   locale: string
-  initSession: (pk: string, turnstileToken?: string) => Promise<void>
 }
 
-export const useChatBot = (publicKey?: string): UseChatBotReturn => {
-  const [currentBot, setCurrentBot] = useState<any>()
+type SessionRestorePayload = {
+  ok?: boolean
+  chatRoomId?: string
+  consentGiven?: boolean
+  status?: ChatStatus
+  currentStepKey?: string | null
+}
+
+export const useChatBot = ({
+  publicKey,
+  pageUrl,
+  utm,
+  locale: requestedLocale,
+}: UseChatBotOptions = {}): UseChatBotReturn => {
+  const [currentBot, setCurrentBot] = useState<Brand>()
   const [config, setConfig] = useState<WidgetConfig | undefined>()
   const [sessionToken, setSessionToken] = useState<string | undefined>(undefined)
   const [chatRoomId, setChatRoomId] = useState<string | undefined>(undefined)
   const [consentGiven, setConsentGiven] = useState<boolean>(false)
+  const [consentPending, setConsentPending] = useState(false)
   const messageWindowRef = useRef<HTMLDivElement | null>(null)
   const [botOpened, setBotOpened] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(Boolean(publicKey))
   const [onChats, setOnChats] = useState<ChatMessageType[]>([])
   const [onAiTyping, setOnAiTyping] = useState(false)
-  const [status, setStatus] = useState<'BOT' | 'WAITING_AGENT' | 'LIVE' | 'CLOSED'>('BOT')
-  const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<ChatStatus>('BOT')
+  const [error, setError] = useState<string | null>(publicKey ? null : 'Missing widget key')
   const [currentStepKey, setCurrentStepKey] = useState<string | null>(null)
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
+  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0)
 
-  const [sessionInitialized, setSessionInitialized] = useState(false)
-  const initLockRef = useRef<boolean>(false)
+  // Guards session creation. `sessionReadyRef` is set as soon as a session is
+  // restored or created so re-renders (including React StrictMode) cannot
+  // start a second initialization.
+  const initLockRef = useRef(false)
+  const sessionReadyRef = useRef(false)
 
-  // Scoped storage keys per public key
-  const storageKey = useCallback((suffix: string) => (publicKey ? `realchat:${publicKey}:${suffix}` : suffix), [publicKey])
+  // Stable dependency for the UTM object, which callers may recreate per render.
+  const utmJson = utm && Object.keys(utm).length > 0 ? JSON.stringify(utm) : ''
 
   /* ----------------------------------------------------------------
-   * Bootstrap order: config -> Turnstile -> session -> messages
+   * 1. Load the shared widget configuration contract.
    * ---------------------------------------------------------------- */
-
-  // Step 1: Fetch widget config first (key-validated endpoint)
   useEffect(() => {
     let cancelled = false
+
+    if (!publicKey) return
+
     const loadConfig = async () => {
-      if (!publicKey) return
       try {
         const res = await fetch(`/api/widget/config?key=${encodeURIComponent(publicKey)}`)
         if (!res.ok) {
-          setLoading(false)
+          if (!cancelled) {
+            setError('Unable to load chat configuration')
+            setLoading(false)
+          }
           return
         }
         const data = await res.json()
         const parsed = WidgetConfigSchema.safeParse(data)
         if (!parsed.success) {
-          setLoading(false)
+          if (!cancelled) {
+            setError('Invalid chat configuration')
+            setLoading(false)
+          }
           return
         }
+        if (cancelled) return
         setConfig(parsed.data)
         setCurrentBot(parsed.data.brand)
         setStatus('BOT')
+        setError(null)
+        // `loading` stays true until the session orchestrator finishes.
       } catch {
-        // config load failure is non-fatal
-      } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setError('Unable to load chat configuration')
+          setLoading(false)
+        }
       }
     }
-    loadConfig()
-    return () => { cancelled = true }
+
+    void loadConfig()
+    return () => {
+      cancelled = true
+    }
   }, [publicKey])
 
-  // Step 2 + 3: After config loads, restore or create a session.
-  // Restored sessions are validated server-side; duplicates are prevented.
-  useEffect(() => {
-    let cancelled = false
-    const init = async () => {
-      if (!publicKey || !config || sessionInitialized || initLockRef.current) return
+  /* ----------------------------------------------------------------
+   * 2. The single session initialization orchestrator.
+   *
+   * Order: restore a server-valid session -> wait for Turnstile (when
+   * required) -> create exactly one session with attribution.
+   * ---------------------------------------------------------------- */
+  const initializeSession = useCallback(
+    async (token: string | null) => {
+      if (!publicKey || !config) return
+      if (initLockRef.current || sessionReadyRef.current) return
+      if (config.turnstile.enabled && !token) return
+
       initLockRef.current = true
+      // Defer state writes out of the synchronous effect body; the lock above
+      // already guarantees only one attempt can be in flight.
+      await Promise.resolve()
+      setLoading(true)
+      setError(null)
 
-      const tokenKey = storageKey('session_token')
-      const roomKey = storageKey('chat_room_id')
+      const tokenKey = widgetStorageKey(publicKey, 'session_token')
+      const roomKey = widgetStorageKey(publicKey, 'chat_room_id')
+      let restored = false
 
-      // Try restoring an existing session from scoped localStorage.
-      let restoredToken: string | undefined
-      let restoredRoomId: string | undefined
-      if (typeof window !== 'undefined') {
-        restoredToken = localStorage.getItem(tokenKey) || undefined
-        restoredRoomId = localStorage.getItem(roomKey) || undefined
-      }
-
-      if (restoredToken && restoredRoomId) {
-        // Validate restored session server-side before trusting it.
+      // Restore first: a stored token is only trusted after the server
+      // validates it and returns the authoritative room state.
+      const storedToken =
+        typeof window !== 'undefined' ? window.localStorage.getItem(tokenKey) : null
+      if (storedToken) {
         try {
           const res = await fetch('/api/widget/messages', {
-            headers: { Authorization: `Bearer ${restoredToken}` },
+            headers: { Authorization: `Bearer ${storedToken}` },
           })
           if (res.ok) {
-            setSessionToken(restoredToken)
-            setChatRoomId(restoredRoomId)
-            setSessionInitialized(true)
-            initLockRef.current = false
-            setLoading(false)
-            return
+            const data = (await res.json().catch(() => null)) as SessionRestorePayload | null
+            if (data?.ok && data.chatRoomId) {
+              sessionReadyRef.current = true
+              restored = true
+              setSessionToken(storedToken)
+              setChatRoomId(data.chatRoomId)
+              setConsentGiven(Boolean(data.consentGiven))
+              setStatus(data.status ?? 'BOT')
+              setCurrentStepKey(data.currentStepKey ?? null)
+              if (typeof window !== 'undefined') {
+                window.localStorage.setItem(roomKey, data.chatRoomId)
+              }
+            }
           }
         } catch {
-          // fall through to create new session
+          // Fall through to create a new session.
         }
-        // Restored session invalid -> clear stale keys and create new
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem(tokenKey)
-          localStorage.removeItem(roomKey)
+
+        if (!restored && typeof window !== 'undefined') {
+          window.localStorage.removeItem(tokenKey)
+          window.localStorage.removeItem(roomKey)
         }
       }
 
-      // Create a new session.
+      if (restored) {
+        setLoading(false)
+        initLockRef.current = false
+        return
+      }
+
+      // Never create a session without a token when Turnstile is required.
+      if (config.turnstile.enabled && !token) {
+        setLoading(false)
+        initLockRef.current = false
+        return
+      }
+
       try {
+        const body: Record<string, unknown> = { key: publicKey }
+        if (token) body.turnstileToken = token
+        if (pageUrl) body.pageUrl = pageUrl
+        if (utmJson) body.utm = JSON.parse(utmJson)
+        if (requestedLocale) body.locale = requestedLocale
+
         const res = await fetch('/api/widget/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: publicKey }),
+          body: JSON.stringify(body),
         })
-        if (!res.ok) {
-          setError('Unable to start session')
-          setLoading(false)
-          initLockRef.current = false
+        const data = await res.json().catch(() => null)
+
+        if (!res.ok || !data?.ok || !data.sessionToken || !data.chatRoomId) {
+          if (res.status === 403) {
+            // The Turnstile token was rejected or expired. Ask the component
+            // to reset the widget so a fresh token can be issued.
+            setTurnstileToken(null)
+            setTurnstileResetSignal((n) => n + 1)
+            setError('Verification failed. Please try again.')
+          } else {
+            setError('Unable to start session')
+          }
           return
         }
-        const data = await res.json()
-        if (data.ok && data.sessionToken && data.chatRoomId) {
-          setSessionToken(data.sessionToken)
-          setChatRoomId(data.chatRoomId)
-          setSessionInitialized(true)
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(tokenKey, data.sessionToken)
-            localStorage.setItem(roomKey, data.chatRoomId)
-          }
-          setLoading(false)
-          initLockRef.current = false
-          return
+
+        sessionReadyRef.current = true
+        setSessionToken(data.sessionToken)
+        setChatRoomId(data.chatRoomId)
+        setConsentGiven(false)
+        setCurrentStepKey(null)
+        setError(null)
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(tokenKey, data.sessionToken)
+          window.localStorage.setItem(roomKey, data.chatRoomId)
         }
       } catch {
-        // fall through
+        setError('Unable to start session')
+      } finally {
+        setLoading(false)
+        initLockRef.current = false
       }
-      setError('Unable to start session')
-      setLoading(false)
-      initLockRef.current = false
-    }
-    init()
-    return () => { cancelled = true }
-  }, [config, publicKey, storageKey, sessionInitialized])
+    },
+    [publicKey, config, pageUrl, utmJson, requestedLocale]
+  )
 
-  // Step 4: After session established, load persisted messages.
+  // The only automatic entry point into the orchestrator. Deferring the call
+  // keeps the effect free of synchronous state updates (the lock still makes
+  // the attempt idempotent).
+  useEffect(() => {
+    if (!publicKey || !config) return
+    if (sessionReadyRef.current) return
+    if (config.turnstile.enabled && !turnstileToken) return
+    const timer = setTimeout(() => {
+      void initializeSession(turnstileToken)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [publicKey, config, turnstileToken, initializeSession])
+
+  const onTurnstileToken = useCallback((token: string) => {
+    setTurnstileToken(token)
+    setError(null)
+  }, [])
+
+  const onTurnstileExpired = useCallback(() => {
+    setTurnstileToken(null)
+  }, [])
+
+  const onTurnstileError = useCallback(() => {
+    setError('Verification could not be completed. Please refresh the page.')
+    setLoading(false)
+  }, [])
+
+  const retrySession = useCallback(() => {
+    setError(null)
+    void initializeSession(turnstileToken)
+  }, [initializeSession, turnstileToken])
+
+  /* ----------------------------------------------------------------
+   * 3. Load persisted messages once a session exists.
+   * ---------------------------------------------------------------- */
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -187,7 +304,7 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
         })
         if (res.ok) {
           const data = await res.json()
-          if (data.ok && data.messages) {
+          if (data.ok && data.messages && !cancelled) {
             setOnChats(
               data.messages.map((m: any) => ({
                 id: m.id,
@@ -202,15 +319,17 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
         // messages load failure is non-fatal
       }
     }
-    load()
-    return () => { cancelled = true }
+    void load()
+    return () => {
+      cancelled = true
+    }
   }, [chatRoomId, sessionToken])
 
-  // Step 5: Subscribe to Pusher room channel for real-time visitor updates.
-  // Persist first, then publish: on message.created, clients recover the full
-  // persisted message via GET /api/widget/messages.
+  /* ----------------------------------------------------------------
+   * 4. Subscribe to the room channel. Pusher auth must receive the
+   * visitor's bearer token or the server rejects the subscription.
+   * ---------------------------------------------------------------- */
   useEffect(() => {
-    let cancelled = false
     const key = process.env.NEXT_PUBLIC_PUSHER_KEY
     const cluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER
 
@@ -221,7 +340,7 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
     const pusher = new Pusher(key, {
       cluster,
       authEndpoint: '/api/pusher/auth',
-      auth: { params: {} },
+      auth: { headers: { Authorization: `Bearer ${sessionToken}` } },
       disableStats: true,
       enabledTransports: ['ws', 'wss'],
     })
@@ -233,7 +352,6 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
 
     channel.bind('message.created', async (data: MessageCreatedEvent) => {
       if (data.roomId !== chatRoomId) return
-      // Deduplicate by messageId
       if (pendingMessageIds.has(data.messageId)) return
       pendingMessageIds.add(data.messageId)
 
@@ -243,7 +361,7 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
         })
         if (!res.ok) return
         const data2 = await res.json()
-        const items = data2?.items ?? data2?.messages ?? []
+        const items = data2?.messages ?? data2?.items ?? []
         const newItem = items.find((m: any) => m.id === data.messageId)
         if (!newItem) return
 
@@ -253,8 +371,8 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
             ...prev,
             {
               id: newItem.id,
-              role: newItem.senderType === 'VISITOR' ? 'user' : 'assistant',
-              content: newItem.message,
+              role: newItem.role === 'user' ? 'user' : 'assistant',
+              content: newItem.content,
               createdAt: newItem.createdAt,
             },
           ]
@@ -272,216 +390,173 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
       pusher.disconnect()
     }
   }, [chatRoomId, sessionToken])
+
   const notifyResize = useCallback(() => {
     if (typeof window === 'undefined' || !window.parent || window.parent === window) return
-    const position = (config?.brand.position ?? 'BOTTOM_RIGHT') === 'BOTTOM_LEFT' ? 'BOTTOM_LEFT' : 'BOTTOM_RIGHT'
-    window.parent.postMessage(
-      { type: 'widget:state', open: botOpened, position, hasLabel: true },
-      '*'
-    )
+    const position =
+      (config?.brand.position ?? 'BOTTOM_RIGHT') === 'BOTTOM_LEFT' ? 'BOTTOM_LEFT' : 'BOTTOM_RIGHT'
+    window.parent.postMessage({ type: 'widget:state', open: botOpened, position, hasLabel: true }, '*')
   }, [botOpened, config])
 
-  useEffect(() => { notifyResize() }, [notifyResize])
+  useEffect(() => {
+    notifyResize()
+  }, [notifyResize])
 
-  const buildInitialMessages = (bot: any): ChatMessageType[] => {
+  const buildInitialMessages = (bot: Brand | undefined): ChatMessageType[] => {
     const welcome = bot?.welcomeMessage || config?.brand.welcomeMessage || 'Hi! How can we help you today?'
     return [{ role: 'assistant', content: welcome }]
   }
 
-  // Client-triggered session (e.g. postMessage from parent with a Turnstile token)
-  const initSession = useCallback(async (pk: string, turnstileToken?: string) => {
-    try {
-      const res = await fetch('/api/widget/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: pk, turnstileToken }),
-      })
-      if (!res.ok) {
-        setError('Unable to start session')
-        setLoading(false)
-        return
-      }
-      const data = await res.json()
-      if (data.ok && data.sessionToken && data.chatRoomId) {
-        setSessionToken(data.sessionToken)
-        setChatRoomId(data.chatRoomId)
-        setSessionInitialized(true)
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(storageKey('session_token'), data.sessionToken)
-          localStorage.setItem(storageKey('chat_room_id'), data.chatRoomId)
+  const sendMessage = useCallback(
+    async (text: string, answer?: string | null) => {
+      if (!sessionToken) return
+      const stepKey = currentStepKey ?? ''
+      const answerValue = answer ?? text
+      const idempotencyKey = crypto.randomUUID()
+
+      const userMsg: ChatMessageType = { role: 'user', content: text }
+      setOnChats((prev) => [...prev, userMsg])
+      setOnAiTyping(true)
+      setError(null)
+      try {
+        const res = await fetch('/api/widget/message', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'FLOW_ANSWER',
+            stepKey,
+            answer: answerValue,
+            idempotencyKey,
+          }),
+        })
+        setOnAiTyping(false)
+        if (!res.ok) {
+          setOnChats((prev) => prev.filter((m) => m !== userMsg))
+          setError('Failed to send message')
+          return
         }
-        setLoading(false)
-      }
-    } catch {
-      setError('Unable to start session')
-      setLoading(false)
-    }
-  }, [storageKey])
-
-  useEffect(() => {
-    // Don't auto-init if Turnstile is enabled — the component will call
-    // initSession(publicKey, turnstileToken) after obtaining a token.
-    if (
-      publicKey &&
-      !sessionInitialized &&
-      !sessionToken &&
-      !config?.turnstile.enabled
-    ) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      initSession(publicKey)
-    }
-  }, [publicKey, sessionInitialized, sessionToken, initSession, config])
-
-  // Listen for postMessage from parent (embed.js) passing the public key
-  useEffect(() => {
-    const handleParentMessage = (e: MessageEvent) => {
-      let botid = e.data
-      if (typeof botid === 'object' && botid !== null) {
-        botid = botid.id || botid.botId || botid.domainId || botid.key || botid.publicKey
-      }
-      if (typeof botid === 'string' && botid.trim().length > 0 && !sessionToken && !sessionInitialized) {
-        initSession(botid.trim())
-      }
-    }
-    window.addEventListener('message', handleParentMessage)
-    return () => window.removeEventListener('message', handleParentMessage)
-  }, [sessionToken, sessionInitialized, initSession, publicKey])
-
-  const sendMessage = useCallback(async (text: string, answer?: string | null) => {
-    if (!sessionToken) return
-    const stepKey = currentStepKey ?? ''
-    const answerValue = answer ?? text
-    const idempotencyKey = crypto.randomUUID()
-
-    const userMsg: ChatMessageType = { role: 'user', content: text }
-    const updatedChats = [...onChats, userMsg]
-    setOnChats(updatedChats)
-    setOnAiTyping(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/widget/message', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind: 'FLOW_ANSWER',
-          stepKey,
-          answer: answerValue,
-          idempotencyKey,
-        }),
-      })
-      setOnAiTyping(false)
-      if (!res.ok) {
-        setOnChats((prev) => prev.filter((m) => m !== userMsg))
-        setError('Failed to send message')
-        return
-      }
-      const data = await res.json()
-      if (!data.ok) {
-        setOnChats((prev) => prev.filter((m) => m !== userMsg))
-        setError('Failed to send message')
-        return
-      }
-
-      if (data.currentStep) {
-        setCurrentStepKey(data.currentStep.key)
-        const botMsg: ChatMessageType = { role: 'assistant', content: data.currentStep.question }
-        setOnChats((prev) => [...prev, botMsg])
-      }
-      if (data.flowCompleted) {
-        setStatus('CLOSED')
-        const actionsMsg: ChatMessageType = {
-          role: 'assistant',
-          content: 'Thank you! How would you like to proceed?',
-          widget: 'chat-ended',
-          widgetData: { actions: data.actions ?? [] },
+        const data = await res.json()
+        if (!data.ok) {
+          setOnChats((prev) => prev.filter((m) => m !== userMsg))
+          setError('Failed to send message')
+          return
         }
-        setOnChats((prev) => [...prev, actionsMsg])
+
+        if (data.currentStep) {
+          setCurrentStepKey(data.currentStep.key)
+          const botMsg: ChatMessageType = { role: 'assistant', content: data.currentStep.question }
+          setOnChats((prev) => [...prev, botMsg])
+        }
+        if (data.flowCompleted) {
+          setStatus('CLOSED')
+          const actionsMsg: ChatMessageType = {
+            role: 'assistant',
+            content: 'Thank you! How would you like to proceed?',
+            widget: 'chat-ended',
+            widgetData: { actions: data.actions ?? [] },
+          }
+          setOnChats((prev) => [...prev, actionsMsg])
+        }
+      } catch {
+        setOnChats((prev) => prev.filter((m) => m !== userMsg))
+        setOnAiTyping(false)
+        setError('Failed to send message')
       }
-    } catch {
-      setOnChats((prev) => prev.filter((m) => m !== userMsg))
-      setOnAiTyping(false)
-      setError('Failed to send message')
-    }
-  }, [sessionToken, onChats, currentStepKey])
+    },
+    [sessionToken, currentStepKey]
+  )
 
   const handleSendMessage = async (values: { content?: string }) => {
     if (values.content) await sendMessage(values.content)
   }
 
-  const onSelectOption = async (option: string) => { await sendMessage(option) }
-  const onBookSlot = async (_dateStr: string, _slotTime: string) => { /* booking handled by manage page */ }
-  const onRestartChat = () => { if (currentBot) setOnChats(buildInitialMessages(currentBot)) }
+  const onSelectOption = async (option: string) => {
+    await sendMessage(option)
+  }
+  const onBookSlot = async (_dateStr: string, _slotTime: string) => {
+    /* booking handled by manage page */
+  }
+  const onRestartChat = () => {
+    if (currentBot) setOnChats(buildInitialMessages(currentBot))
+  }
 
-  const sendQuestion = useCallback(async (content: string) => {
-    if (!sessionToken) return
-    const userMsg: ChatMessageType = { role: 'user', content }
-    const updatedChats = [...onChats, userMsg]
-    setOnChats(updatedChats)
-    setOnAiTyping(true)
+  const sendQuestion = useCallback(
+    async (content: string) => {
+      if (!sessionToken) return
+      const userMsg: ChatMessageType = { role: 'user', content }
+      setOnChats((prev) => [...prev, userMsg])
+      setOnAiTyping(true)
+      setError(null)
+      try {
+        const res = await fetch('/api/widget/message', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'QUESTION', content }),
+        })
+        setOnAiTyping(false)
+        if (!res.ok) {
+          setOnChats((prev) => prev.filter((m) => m !== userMsg))
+          setError('Failed to send question')
+          return
+        }
+        const data = await res.json()
+        if (!data.ok) {
+          setOnChats((prev) => prev.filter((m) => m !== userMsg))
+          setError('Failed to send question')
+          return
+        }
+        data.messages?.forEach((m: any) => {
+          setOnChats((prev) => [
+            ...prev,
+            { id: m.id, role: m.role, content: m.content, createdAt: m.createdAt },
+          ])
+        })
+        if (data.flowCompleted) {
+          setStatus('CLOSED')
+        }
+      } catch {
+        setOnChats((prev) => prev.filter((m) => m !== userMsg))
+        setOnAiTyping(false)
+        setError('Failed to send question')
+      }
+    },
+    [sessionToken]
+  )
+
+  const acceptConsent = useCallback(async () => {
+    if (!sessionToken || consentPending) return
+    setConsentPending(true)
     setError(null)
-    try {
-      const res = await fetch('/api/widget/message', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'QUESTION', content }),
-      })
-      setOnAiTyping(false)
-      if (!res.ok) {
-        setOnChats((prev) => prev.filter((m) => m !== userMsg))
-        setError('Failed to send question')
-        return
-      }
-      const data = await res.json()
-      if (!data.ok) {
-        setOnChats((prev) => prev.filter((m) => m !== userMsg))
-        setError('Failed to send question')
-        return
-      }
-      data.messages?.forEach((m: any) => {
-        setOnChats((prev) => [...prev, { id: m.id, role: m.role, content: m.content, createdAt: m.createdAt }])
-      })
-      if (data.flowCompleted) {
-        setStatus('CLOSED')
-      }
-    } catch {
-      setOnChats((prev) => prev.filter((m) => m !== userMsg))
-      setOnAiTyping(false)
-      setError('Failed to send question')
-    }
-  }, [sessionToken, onChats])
-
-  const acceptConsent = async () => {
-    if (!sessionToken) return
     try {
       const res = await fetch('/api/widget/message', {
         method: 'POST',
         headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'CONSENT', accepted: true }),
       })
-      if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok) {
+        // Consent is only ever recorded after the server confirms it.
         setError('Failed to accept consent')
         return
       }
-      const data = await res.json()
-      if (!data.ok) {
-        setError('Failed to accept consent')
-        return
-      }
-      // UI state set ONLY after server confirms consent persistence
       setConsentGiven(true)
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(storageKey('consent_given'), 'true')
-      }
       setStatus('BOT')
-      if (data.kind === 'step' && data.step) {
-        setOnChats([{ role: 'assistant', content: data.step.prompt }])
-      } else {
-        setOnChats([])
-      }
+      if (data.currentStep?.key) setCurrentStepKey(data.currentStep.key)
+      const messages = Array.isArray(data.messages)
+        ? data.messages.map((m: any) => ({
+            id: m.id,
+            role: 'assistant' as const,
+            content: m.content,
+            createdAt: m.createdAt,
+          }))
+        : []
+      setOnChats(messages)
     } catch {
       setError('Failed to accept consent')
+    } finally {
+      setConsentPending(false)
     }
-  }
+  }, [sessionToken, consentPending])
 
   const requestHandoff = async () => {
     if (!sessionToken) return
@@ -495,9 +570,14 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
       const data = await res.json()
       if (data.ok) {
         setStatus('WAITING_AGENT')
-        setOnChats((prev) => [...prev, { role: 'assistant', content: 'A person will be with you shortly.' }])
+        setOnChats((prev) => [
+          ...prev,
+          { role: 'assistant', content: 'A person will be with you shortly.' },
+        ])
       }
-    } catch {}
+    } catch {
+      // handoff failure is non-fatal
+    }
   }
 
   const turnstileSiteKey = config?.turnstile.siteKey ?? undefined
@@ -505,15 +585,45 @@ export const useChatBot = (publicKey?: string): UseChatBotReturn => {
   const locale = config?.domain.defaultLocale ?? 'en'
 
   return {
-    botOpened, onOpenChatBot: () => setBotOpened((p) => !p), handleSendMessage,
-    onSelectOption, onBookSlot, onRestartChat, onChats, register: null as any, onAiTyping,
-    messageWindowRef, currentBot, loading, config, sessionToken, chatRoomId,
-    consentGiven, setConsentGiven, requestHandoff, status,
-    acceptConsent, sendMessage, sendQuestion, getValues: null as any,
-    errors: error, turnstileSiteKey, flow, locale, initSession,
+    botOpened,
+    onOpenChatBot: () => setBotOpened((p) => !p),
+    handleSendMessage,
+    onSelectOption,
+    onBookSlot,
+    onRestartChat,
+    onChats,
+    register: null as any,
+    onAiTyping,
+    messageWindowRef,
+    currentBot,
+    loading,
+    config,
+    sessionToken,
+    chatRoomId,
+    consentGiven,
+    consentPending,
+    setConsentGiven,
+    requestHandoff,
+    status,
+    acceptConsent,
+    sendMessage,
+    sendQuestion,
+    getValues: null as any,
+    errors: error,
+    turnstileSiteKey,
+    turnstileResetSignal,
+    onTurnstileToken,
+    onTurnstileExpired,
+    onTurnstileError,
+    retrySession,
+    flow,
+    locale,
   }
 }
 
-export const useRealTime = (_chatRoom: string, _setChats: React.Dispatch<React.SetStateAction<any[]>>) => {
+export const useRealTime = (
+  _chatRoom: string,
+  _setChats: React.Dispatch<React.SetStateAction<any[]>>
+) => {
   // no-op stub for backward compatibility with dead real-time.tsx
 }

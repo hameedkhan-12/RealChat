@@ -22,6 +22,10 @@ export const GET = handle(async (req: Request) => {
   return NextResponse.json(
     {
       ok: true,
+      chatRoomId: room.id,
+      status: room.status,
+      consentGiven: Boolean(room.consentAt),
+      currentStepKey: room.currentStepKey,
       messages: messages.map((m) => ({
         id: m.id,
         role: m.senderType === 'VISITOR' ? 'user' : m.senderType === 'AGENT' ? 'agent' : 'assistant',

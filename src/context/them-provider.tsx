@@ -29,6 +29,46 @@ type ThemeProviderProps = {
   [key: string]: unknown
 }
 
+const subscribeNoop = () => () => {}
+
+const themeListeners = new Set<() => void>()
+
+function notifyThemeChange() {
+  themeListeners.forEach((listener) => listener())
+}
+
+function subscribeToTheme(callback: () => void) {
+  themeListeners.add(callback)
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === null) callback()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    themeListeners.delete(callback)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+function readStoredTheme(storageKey: string): Theme | undefined {
+  try {
+    const stored = window.localStorage.getItem(storageKey)
+    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
+  } catch {
+    // localStorage can be unavailable (private mode, blocked cookies).
+  }
+  return undefined
+}
+
+function subscribeToSystemTheme(callback: () => void) {
+  const media = window.matchMedia('(prefers-color-scheme: dark)')
+  media.addEventListener('change', callback)
+  return () => media.removeEventListener('change', callback)
+}
+
+function getSystemTheme(): 'light' | 'dark' {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 export function ThemeProvider({
   children,
   theme: forcedTheme,
@@ -36,29 +76,18 @@ export function ThemeProvider({
   storageKey = 'theme',
   ...props
 }: ThemeProviderProps) {
-  const [mounted, setMounted] = React.useState(false)
-  const [storedTheme, setStoredTheme] = React.useState<Theme | undefined>(forcedTheme)
-  const [systemTheme, setSystemTheme] = React.useState<'light' | 'dark'>('light')
+  // `useSyncExternalStore` gives us the post-hydration value without an
+  // effect that sets state synchronously.
+  const mounted = React.useSyncExternalStore(subscribeNoop, () => true, () => false)
+  const systemTheme = React.useSyncExternalStore(subscribeToSystemTheme, getSystemTheme, () => 'light' as const)
+  const persistedTheme = React.useSyncExternalStore(
+    subscribeToTheme,
+    () => readStoredTheme(storageKey),
+    () => undefined
+  )
+  const [overrideTheme, setOverrideTheme] = React.useState<Theme | undefined>(undefined)
 
-  React.useEffect(() => {
-    setMounted(true)
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const onChange = () => setSystemTheme(media.matches ? 'dark' : 'light')
-    media.addEventListener('change', onChange)
-    setSystemTheme(media.matches ? 'dark' : 'light')
-    return () => media.removeEventListener('change', onChange)
-  }, [])
-
-  React.useEffect(() => {
-    if (!mounted || storedTheme !== undefined) return
-    if (typeof window !== 'undefined') {
-      const stored = window.localStorage.getItem(storageKey)
-      if (stored === 'light' || stored === 'dark' || stored === 'system') {
-        setStoredTheme(stored)
-      }
-    }
-  }, [mounted, storedTheme, storageKey])
-
+  const storedTheme = overrideTheme ?? forcedTheme ?? persistedTheme
   const theme = storedTheme ?? defaultTheme
   const resolvedTheme = theme === 'system' ? systemTheme : theme
 
@@ -73,7 +102,13 @@ export function ThemeProvider({
   }, [theme, resolvedTheme, mounted, storageKey, forcedTheme, storedTheme])
 
   const setTheme = (nextTheme: Theme) => {
-    setStoredTheme(nextTheme)
+    setOverrideTheme(nextTheme)
+    try {
+      window.localStorage.setItem(storageKey, nextTheme)
+    } catch {
+      // Persisting is best-effort; the in-memory theme still applies.
+    }
+    notifyThemeChange()
   }
 
   const value: ThemeContextValue = {

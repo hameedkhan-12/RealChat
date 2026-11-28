@@ -112,10 +112,11 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
   const {
     botOpened, onOpenChatBot, handleSendMessage, onSelectOption, onBookSlot, onRestartChat,
     onChats, onAiTyping, currentBot, loading, config, sessionToken,
-    consentGiven, setConsentGiven, requestHandoff, status, acceptConsent,
-    sendQuestion, errors, turnstileSiteKey, flow, locale,
-    initSession,
-  } = useChatBot(publicKey)
+    consentGiven, consentPending, requestHandoff, status, acceptConsent,
+    sendQuestion, errors, turnstileSiteKey, turnstileResetSignal,
+    onTurnstileToken, onTurnstileExpired, onTurnstileError, retrySession,
+    flow, locale,
+  } = useChatBot({ publicKey, pageUrl, utm, locale: lang })
 
   const brand = config?.brand
   const domainName = config?.domain.name || 'Business'
@@ -133,7 +134,6 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
   const consentRequired = !consentGiven
 
   const [expanded, setExpanded] = useState(false)
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   const [turnstileWidgetId, setTurnstileWidgetId] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const launcherSideCls = position === 'BOTTOM_LEFT' ? 'left-4' : 'right-4'
@@ -145,39 +145,35 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
   // After obtaining a token, create the session with the token.
   useEffect(() => {
     if (!turnstileSiteKey || turnstileWidgetId !== null) return
-    loadTurnstile().then(() => {
-      const container = document.createElement('div')
-      container.id = 'realchat-turnstile-widget'
-      container.style.position = 'absolute'
-      container.style.width = '0'
-      container.style.height = '0'
-      container.style.overflow = 'hidden'
-      document.body.appendChild(container)
-      const id = (window as any).turnstile.render('#realchat-turnstile-widget', {
-        sitekey: turnstileSiteKey,
-        callback: async (token: string) => {
-          setTurnstileToken(token)
-          if (publicKey) {
-            await initSession(publicKey, token)
-          }
-        },
-        'error-callback': () => setTurnstileToken(null),
-        'expired-callback': () => setTurnstileToken(null),
+    loadTurnstile()
+      .then(() => {
+        const container = document.createElement('div')
+        container.id = 'realchat-turnstile-widget'
+        container.style.position = 'absolute'
+        container.style.width = '0'
+        container.style.height = '0'
+        container.style.overflow = 'hidden'
+        document.body.appendChild(container)
+        const id = (window as any).turnstile.render('#realchat-turnstile-widget', {
+          sitekey: turnstileSiteKey,
+          callback: (token: string) => onTurnstileToken(token),
+          'error-callback': () => onTurnstileError(),
+          'expired-callback': () => onTurnstileExpired(),
+        })
+        setTurnstileWidgetId(id)
       })
-      setTurnstileWidgetId(id)
-    }).catch(() => {
-      // Turnstile load failure — proceed without token (session will fail if required)
-    })
-  }, [turnstileSiteKey, publicKey, initSession, turnstileWidgetId])
+      .catch(() => {
+        // The session orchestrator will never create without a token, so surface
+        // the failure instead of silently proceeding.
+        onTurnstileError()
+      })
+  }, [turnstileSiteKey, turnstileWidgetId, onTurnstileToken, onTurnstileError, onTurnstileExpired])
 
-  // Reset Turnstile when a new session starts
+  // Reset Turnstile after the server rejects a token so a fresh one is issued.
   useEffect(() => {
-    if (turnstileWidgetId !== null && sessionToken) {
-      ;(window as any).turnstile.reset(turnstileWidgetId)
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTurnstileToken(null)
-    }
-  }, [sessionToken, turnstileWidgetId])
+    if (turnstileWidgetId === null || turnstileResetSignal === 0) return
+    ;(window as any).turnstile?.reset(turnstileWidgetId)
+  }, [turnstileResetSignal, turnstileWidgetId])
 
   if (consentRequired) {
     return (
@@ -199,16 +195,21 @@ export default function ChatWidget({ publicKey, pageUrl, utm, lang }: Props) {
           {errors && <p className="text-sm mb-4 text-red-400">{errors}</p>}
           <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
             <Button
-              onClick={() => { setConsentGiven(true); acceptConsent() }}
+              onClick={() => void acceptConsent()}
               className="flex-1"
-              disabled={loading}
+              disabled={loading || !sessionToken || consentPending}
             >
-              {loading ? '…' : strings.connectLiveAgentShort || 'Accept'}
+              {loading || consentPending ? '…' : strings.connectLiveAgentShort || 'Accept'}
             </Button>
             <Button variant="outline" onClick={onOpenChatBot} className="flex-1">
               {strings.noThanks || 'No thanks'}
             </Button>
           </div>
+          {!sessionToken && !loading && (
+            <Button variant="outline" onClick={retrySession} className="mt-3">
+              Retry
+            </Button>
+          )}
           {brand?.showPoweredBy !== false && (
             <p className="mt-6 text-[10px] opacity-60">Powered by RealChat</p>
           )}

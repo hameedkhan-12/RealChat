@@ -14,13 +14,23 @@ export const IanaTimezoneSchema = z.string().max(64).refine((tz) => {
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true } catch { return false }
 }, 'INVALID_TIMEZONE')
 
-const Utm = z.record(z.string().max(100)).refine((o) => Object.keys(o).length <= 10, 'TOO_MANY_KEYS')
+const PageUrlSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .url()
+  .refine((v) => /^https?:\/\//i.test(v), 'INVALID_PAGE_URL')
+
+const UtmKeySchema = z.string().regex(/^utm_[a-z0-9_]{1,30}$/i, 'INVALID_UTM_KEY')
+const UtmSchema = z
+  .record(UtmKeySchema, z.string().max(100))
+  .refine((o) => Object.keys(o).length <= 10, 'TOO_MANY_KEYS')
 
 export const SessionBody = z.object({
   key: PublicKeySchema,
-  turnstileToken: z.string().max(2048).optional(),
-  pageUrl: z.string().url().max(500).optional(),
-  utm: Utm.optional(),
+  turnstileToken: z.string().trim().max(2048).optional(),
+  pageUrl: PageUrlSchema.optional(),
+  utm: UtmSchema.optional(),
   locale: LocaleSchema.optional(),
 })
 
@@ -64,22 +74,24 @@ export const ManageCancelBody = z.object({
 export const FlowStepTypeSchema = z.enum(['CHOICE', 'MULTI_CHOICE', 'TEXT', 'NUMBER', 'EMAIL', 'PHONE'])
 export const FlowStepMapsToSchema = z.enum(['NONE', 'NAME', 'EMAIL', 'PHONE'])
 
+export const WidgetPositionSchema = z.enum(['BOTTOM_RIGHT', 'BOTTOM_LEFT'])
+
 /** Shared widget config contract used by both API and client. */
 export const WidgetConfigSchema = z.object({
   ok: z.literal(true),
   domain: z.object({
-    publicKey: z.string(),
-    name: z.string(),
-    timezone: z.string(),
-    defaultLocale: z.string(),
+    publicKey: PublicKeySchema,
+    name: z.string().min(1).max(200),
+    timezone: IanaTimezoneSchema,
+    defaultLocale: LocaleSchema,
   }),
   brand: z.object({
-    name: z.string(),
+    name: z.string().min(1).max(200),
     logoUrl: z.string().nullable(),
     primaryColor: z.string().nullable(),
     textColor: z.string().nullable(),
     avatarUrl: z.string().nullable(),
-    position: z.string().nullable(),
+    position: WidgetPositionSchema,
     welcomeMessage: z.string().nullable(),
     consentText: z.string().nullable(),
     privacyPolicyUrl: z.string().nullable(),
@@ -97,14 +109,15 @@ export const WidgetConfigSchema = z.object({
     siteKey: z.string().nullable(),
   }),
   flow: z.object({
-    version: z.number(),
+    version: z.number().int().nonnegative(),
     steps: z.array(
       z.object({
-        key: z.string(),
+        key: z.string().min(1).max(60),
         question: z.string(),
-        type: z.string(),
+        type: FlowStepTypeSchema,
         required: z.boolean(),
-        options: z.array(z.string()).optional(),
+        // Always an array: the API must never emit null for list fields.
+        options: z.array(z.string()).default([]),
       }),
     ),
   }),

@@ -6,14 +6,13 @@ import React, { useEffect, useState } from 'react'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-const AvailabilityPage = async () => {
+const AvailabilityPage = () => {
   const [rules, setRules] = useState<any[]>([])
   const [exceptions, setExceptions] = useState<any[]>([])
   const [settings, setSettings] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLoading(true)
     onGetAvailability('current-domain')
       .then((res) => {
         if (res?.ok) {

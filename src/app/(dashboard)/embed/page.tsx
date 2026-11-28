@@ -4,7 +4,7 @@ import { onGetEmbedConfig, onUpdateDomainSettings } from '@/actions/settings'
 import InfoBar from '@/components/infobar'
 import React, { useEffect, useState } from 'react'
 
-const EmbedPage = async () => {
+const EmbedPage = () => {
   const [config, setConfig] = useState<any>(null)
   const [allowedOrigins, setAllowedOrigins] = useState<string>('')
   const [timezone, setTimezone] = useState<string>('')
@@ -12,7 +12,6 @@ const EmbedPage = async () => {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    setLoading(true)
     onGetEmbedConfig('current-domain')
       .then((res) => {
         if (res?.ok) {

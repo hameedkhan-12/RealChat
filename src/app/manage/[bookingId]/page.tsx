@@ -1,4 +1,5 @@
 import { client } from '@/lib/prisma'
+import { CancelAppointmentForm } from './cancel-appointment-form'
 
 export default async function ManagePage({
   params,
@@ -23,7 +24,6 @@ export default async function ManagePage({
       endsAt: true,
       visitorTimezone: true,
       cancelledAt: true,
-      manageTokenHash: true,
       domain: { select: { name: true, timezone: true } },
     },
   })
@@ -66,28 +66,7 @@ export default async function ManagePage({
         </p>
         {booking.cancelledAt && <p><strong>Cancelled at:</strong> {new Date(booking.cancelledAt).toLocaleString()}</p>}
         {canCancel ? (
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault()
-              const res = await fetch('/api/manage/cancel', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bookingId: booking.id, token }),
-              })
-              if (res.ok) {
-                e.currentTarget.innerHTML =
-                  '<p style="color:#16a34a">Appointment cancelled.</p>'
-              } else {
-                e.currentTarget.innerHTML =
-                  '<p style="color:#dc2626">Failed to cancel appointment.</p>'
-              }
-            }}
-            style={{ marginTop: '1.5rem' }}
-          >
-            <button type="submit" style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '0.5rem', cursor: 'pointer' }}>
-              Cancel Appointment
-            </button>
-          </form>
+          <CancelAppointmentForm bookingId={booking.id} token={token} />
         ) : token === '' ? (
           <p style={{ marginTop: '1rem', color: '#dc2626' }}>Add <code>?token=MANAGE_TOKEN</code> to this URL to enable cancellation.</p>
         ) : (

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Card } from '../ui/card'
 import Pusher from 'pusher-js'
 import { CHANNEL, type MessageCreatedEvent } from '@/lib/conversation-events'
+import { readWidgetSessionToken } from '@/lib/widget-storage'
 
 type Props = {
   chatRoomId: string
@@ -27,10 +28,14 @@ const RealTimeMode = ({ chatRoomId, setChats }: Props) => {
       return
     }
 
+    // Token storage is scoped by public key; never read the legacy unscoped key.
+    const token = readWidgetSessionToken()
+    if (!token) return
+
     const pusher = new Pusher(key, {
       cluster,
       authEndpoint: '/api/pusher/auth',
-      auth: { params: {} },
+      auth: { headers: { Authorization: `Bearer ${token}` } },
       disableStats: true,
       enabledTransports: ['ws', 'wss'],
     })
@@ -45,15 +50,15 @@ const RealTimeMode = ({ chatRoomId, setChats }: Props) => {
     channel.bind('message.created', async (data: MessageCreatedEvent) => {
       if (data.roomId !== chatRoomId) return
       try {
-        // Note: In the widget iframe, the messages API requires a session token.
-        // The visitor's session token is stored in localStorage by use-chatbot.
-        const token = localStorage.getItem('realchat_session_token')
-        const headers: Record<string, string> = {}
-        if (token) headers['Authorization'] = `Bearer ${token}`
-        const res = await fetch(`/api/widget/messages`, { headers })
+        // The messages API requires the visitor's public-key-scoped token.
+        const res = await fetch(`/api/widget/messages`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
         if (!res.ok) return
-        const data = await res.json()
-        const items = data?.items ?? data?.messages ?? []
+        const payload = await res.json()
+        const items = payload?.items ?? payload?.messages ?? []
+        // Look up using the id from the original Pusher event, not the
+        // response payload (which does not carry the messageId).
         const newItem = items.find((m: any) => m.id === data.messageId)
         if (!newItem) return
         setChats((prev) => {

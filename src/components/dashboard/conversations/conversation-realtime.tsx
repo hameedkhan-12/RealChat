@@ -51,8 +51,10 @@ export function ConversationRealtime({
         // persisted message record via the messages API.
         const res = await fetch(`/api/dashboard/conversations/${conversationId}/messages`)
         if (!res.ok) return
-        const data = await res.json()
-        const items = data?.items ?? data?.messages ?? []
+        const payload = await res.json()
+        const items = payload?.items ?? payload?.messages ?? []
+        // Look up using the id from the original Pusher event, not the
+        // response payload (which does not carry the messageId).
         const newItem = items.find((m: any) => m.id === data.messageId)
         if (!newItem) return
 

@@ -1,22 +1,22 @@
 'use client'
+import React, { useSyncExternalStore } from 'react'
 import Section from '@/components/section-label'
 import { useToast } from '@/components/ui/use-toast'
 import { Copy } from 'lucide-react'
-import React, { useEffect, useState } from 'react'
 
 type Props = {
   id: string
 }
 
+const subscribeNoop = () => () => {}
+
 const CodeSnippet = ({ id }: Props) => {
   const { toast } = useToast()
-  const [origin, setOrigin] = useState('http://localhost:3000')
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setOrigin(window.location.origin)
-    }
-  }, [])
+  const origin = useSyncExternalStore(
+    subscribeNoop,
+    () => window.location.origin,
+    () => 'http://localhost:3000'
+  )
 
   const snippet = `<script>
   (function () {

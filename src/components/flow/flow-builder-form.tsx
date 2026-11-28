@@ -32,7 +32,6 @@ type Props = {
 
 export function FlowBuilderForm({ domainId }: Props) {
   const [steps, setSteps] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState<{
     key: string
@@ -55,16 +54,15 @@ export function FlowBuilderForm({ domainId }: Props) {
   })
 
   useEffect(() => {
-    if (!domainId) {
-      setLoading(false)
-      return
-    }
-    setLoading(true)
+    if (!domainId) return
+    let cancelled = false
     onGetFlowSteps(domainId)
       .then((res) => {
-        if (res?.ok) setSteps((res.data as any).steps || [])
+        if (!cancelled && res?.ok) setSteps((res.data as any).steps || [])
       })
-      .finally(() => setLoading(false))
+    return () => {
+      cancelled = true
+    }
   }, [domainId])
 
   const onAdd = () =>

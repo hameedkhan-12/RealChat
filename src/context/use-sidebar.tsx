@@ -13,9 +13,10 @@ const useSideBar = () => {
   const pathname = usePathname()
   const { toast } = useToast()
   const [realtime, setRealtime] = useState<boolean>(false)
-  const [loading, setLoading] = useState<boolean>(false)
+  const [loadedRoom, setLoadedRoom] = useState<string | null>(null)
 
 const { chatRoom } = useChatContext()
+const loading = !!chatRoom && loadedRoom !== chatRoom
 
 function okMessage(res: any): string | null {
   return res && res.ok && typeof res.data === 'object' ? String((res.data as any).message ?? '') : null
@@ -50,18 +51,17 @@ const onActivateRealtime = async (e: any) => {
   }
 }
 
-const onGetCurrentMode = async () => {
-  setLoading(true)
-  const mode = await onGetConversationMode(chatRoom!)
-  if (mode) {
-    setRealtime(!!mode?.live)
-    setLoading(false)
-  }
-}
-
   useEffect(() => {
-    if (chatRoom) {
-      onGetCurrentMode()
+    if (!chatRoom) return
+    let cancelled = false
+    onGetConversationMode(chatRoom).then((mode) => {
+      if (cancelled) return
+      setLoadedRoom(chatRoom)
+      if (!mode) return
+      setRealtime(!!mode.live)
+    })
+    return () => {
+      cancelled = true
     }
   }, [chatRoom])
 

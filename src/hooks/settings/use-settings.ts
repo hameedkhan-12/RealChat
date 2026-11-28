@@ -201,7 +201,7 @@ export const useHelpDesk = (id: string) => {
   })
   const { toast } = useToast()
 
-  const [loading, setLoading] = useState<boolean>(false)
+  const [loading, setLoading] = useState<boolean>(true)
   const [isQuestions, setIsQuestions] = useState<
     { id: string; question: string; answer: string }[]
   >([])
@@ -223,18 +223,20 @@ export const useHelpDesk = (id: string) => {
     }
   })
 
-  const onGetQuestions = async () => {
-    setLoading(true)
-    const questions = await onGetAllHelpDeskQuestions(id)
-    if (questions?.ok) {
-      setIsQuestions(okQuestions(questions)!)
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    onGetQuestions()
-  }, [])
+    let cancelled = false
+    onGetAllHelpDeskQuestions(id)
+      .then((questions) => {
+        if (cancelled || !questions?.ok) return
+        setIsQuestions(okQuestions(questions)!)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id])
 
   return {
     register,
@@ -255,7 +257,7 @@ export const useFilterQuestions = (id: string) => {
     resolver: zodResolver(FilterQuestionsSchema),
   })
   const { toast } = useToast()
-  const [loading, setLoading] = useState<boolean>(false)
+  const [loading, setLoading] = useState<boolean>(true)
   const [isQuestions, setIsQuestions] = useState<
     { id: string; question: string }[]
   >([])
@@ -274,18 +276,20 @@ export const useFilterQuestions = (id: string) => {
     }
   })
 
-  const onGetQuestions = async () => {
-    setLoading(true)
-    const questions = await onGetAllFilterQuestions(id)
-    if (questions?.ok) {
-      setIsQuestions(okQuestions(questions)!)
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    onGetQuestions()
-  }, [])
+    let cancelled = false
+    onGetAllFilterQuestions(id)
+      .then((questions) => {
+        if (cancelled || !questions?.ok) return
+        setIsQuestions(okQuestions(questions)!)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id])
 
   return {
     loading,

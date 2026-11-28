@@ -19,5 +19,9 @@ export default defineConfig({
     hookTimeout: 60000,
     setupFiles: ['./src/__integration__/pg/setup.ts'],
     environment: 'node',
+    // Run files sequentially to avoid exhausting the (shared) test database
+    // connection pool under parallel workers.
+    fileParallelism: false,
+    maxConcurrency: 1,
   },
 })

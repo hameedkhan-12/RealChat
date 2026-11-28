@@ -107,18 +107,25 @@ export const useChatTime = (createdAt: Date, roomId: string) => {
     const dt = new Date(createdAt)
     const current = new Date()
     const difference = current.getDate() - dt.getDate()
-    if (difference <= 0) {
-      setMessageSentAt(`${dt.getHours()}:${dt.getMinutes()}${dt.getHours() > 12 ? 'PM' : 'AM'}`)
-      if (current.getHours() - dt.getHours() < 2) setUrgent(true)
-    } else {
-      setMessageSentAt(`${dt.getDate()} ${getMonthName(dt.getMonth() + 1)}`)
-    }
+    const label =
+      difference <= 0
+        ? `${dt.getHours()}:${dt.getMinutes()}${dt.getHours() > 12 ? 'PM' : 'AM'}`
+        : `${dt.getDate()} ${getMonthName(dt.getMonth() + 1)}`
+    const recent = difference <= 0 && current.getHours() - dt.getHours() < 2
+    // Defer the updates so we don't set state synchronously inside the effect
+    // (and keep the server render free of timezone-dependent output).
+    const frame = requestAnimationFrame(() => {
+      setMessageSentAt(label)
+      if (recent) setUrgent(true)
+    })
+    return () => cancelAnimationFrame(frame)
   }, [createdAt])
 
   useEffect(() => {
     if (chatRoom == roomId && urgent) {
       onViewUnReadMessages(roomId)
-      setUrgent(false)
+        .catch(() => {})
+        .finally(() => setUrgent(false))
     }
   }, [chatRoom, roomId, urgent])
 
